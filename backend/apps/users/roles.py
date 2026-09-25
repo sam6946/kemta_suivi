@@ -54,9 +54,7 @@ class Capability:
     VIEW_OPERATIONS = "view_operations"
 
 
-ALL_CAPABILITIES = [
-    value for name, value in vars(Capability).items() if not name.startswith("_")
-]
+ALL_CAPABILITIES = [value for name, value in vars(Capability).items() if not name.startswith("_")]
 
 
 def _set(*roles: str) -> frozenset:

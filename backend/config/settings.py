@@ -57,6 +57,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "apps.core",
     "apps.users",
+    "apps.organizations",
+    "apps.projects",
 ]
 
 MIDDLEWARE = [
@@ -164,9 +166,7 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(
-        minutes=env.int("JWT_ACCESS_MINUTES", default=15)
-    ),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=env.int("JWT_ACCESS_MINUTES", default=15)),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=env.int("JWT_REFRESH_DAYS", default=7)),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -286,9 +286,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "json": {"()": "apps.core.logging_utils.JsonFormatter"},
-        "plain": {
-            "format": "%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s"
-        },
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s"},
     },
     "filters": {
         "request_id": {"()": "apps.core.logging_utils.RequestIDFilter"},

@@ -2,6 +2,9 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
 import DashboardPage from "./pages/DashboardPage";
+import OrganizationsPage from "./pages/OrganizationsPage";
+import ProjectDetailPage from "./pages/ProjectDetailPage";
+import ProjectsPage from "./pages/ProjectsPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
@@ -29,6 +32,31 @@ export default function App() {
         element={
           <RequireAuth>
             <DashboardPage />
+          </RequireAuth>
+        }
+      />
+      {/* Phase 3 — organisations, projets et membres */}
+      <Route
+        path="/organisations"
+        element={
+          <RequireAuth>
+            <OrganizationsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/projets"
+        element={
+          <RequireAuth>
+            <ProjectsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/projets/:id"
+        element={
+          <RequireAuth>
+            <ProjectDetailPage />
           </RequireAuth>
         }
       />

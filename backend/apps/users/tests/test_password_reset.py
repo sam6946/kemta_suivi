@@ -14,6 +14,7 @@ NEUTRAL = "Si ce numéro est associé à un compte KEMTA, un code vient d'être 
 
 # --- Demande -----------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_request_reset_sends_otp_with_dedicated_purpose(active_user, api, phone, reset_otp):
     code = reset_otp()
@@ -45,9 +46,10 @@ def test_request_reset_response_is_identical_for_known_number(active_user, api, 
 
 @pytest.mark.django_db
 def test_request_reset_is_throttled(active_user, api, phone):
-    assert api.post(
-        "/api/auth/password/reset/request/", {"phone": phone}, format="json"
-    ).status_code == 200
+    assert (
+        api.post("/api/auth/password/reset/request/", {"phone": phone}, format="json").status_code
+        == 200
+    )
     second = api.post("/api/auth/password/reset/request/", {"phone": phone}, format="json")
     assert second.status_code == 429
     assert second.data["error"]["code"] == "otp_resend_limited"
@@ -69,15 +71,15 @@ def test_request_reset_for_inactive_account_resends_activation_code(
         format="json",
     )
     # On sort de la fenêtre de cooldown pour tester le renvoi d'activation.
-    OTPCode.objects.filter(phone=phone).update(
-        created_at=timezone.now() - timedelta(seconds=120)
-    )
+    OTPCode.objects.filter(phone=phone).update(created_at=timezone.now() - timedelta(seconds=120))
     sms.reset_outbox()
     response = api.post("/api/auth/password/reset/request/", {"phone": phone}, format="json")
     assert response.status_code == 200
     assert response.data["detail"] == NEUTRAL
     otp = OTPCode.objects.filter(phone=phone).order_by("-created_at").first()
-    assert otp.purpose == OTPCode.Purpose.SIGNUP, "Le compte non activé reçoit un code d'activation."
+    assert otp.purpose == OTPCode.Purpose.SIGNUP, (
+        "Le compte non activé reçoit un code d'activation."
+    )
     assert ActivityLog.objects.filter(action="PASSWORD_RESET_DENIED").exists()
 
 
@@ -94,8 +96,11 @@ def test_request_reset_for_deleted_account_is_neutral(active_user, api, phone):
 
 # --- Confirmation -------------------------------------------------------------
 
+
 @pytest.mark.django_db
-def test_confirm_reset_changes_password_and_allows_login(active_user, api, phone, reset_otp, password):
+def test_confirm_reset_changes_password_and_allows_login(
+    active_user, api, phone, reset_otp, password
+):
     code = reset_otp()
     response = api.post(
         "/api/auth/password/reset/confirm/",
@@ -118,9 +123,12 @@ def test_confirm_reset_changes_password_and_allows_login(active_user, api, phone
         "/api/auth/login/", {"phone": phone, "password": "Chantier#2026Kribi"}, format="json"
     )
     assert login.status_code == 200, login.content
-    assert api.post(
-        "/api/auth/login/", {"phone": phone, "password": password}, format="json"
-    ).status_code == 401
+    assert (
+        api.post(
+            "/api/auth/login/", {"phone": phone, "password": password}, format="json"
+        ).status_code
+        == 401
+    )
 
 
 @pytest.mark.django_db
@@ -130,16 +138,19 @@ def test_confirm_reset_revokes_existing_sessions(active_user, api, phone, passwo
     access_token = login.data["access"]
 
     code = reset_otp()
-    assert api.post(
-        "/api/auth/password/reset/confirm/",
-        {
-            "phone": phone,
-            "code": code,
-            "new_password": "Chantier#2026Kribi",
-            "new_password_confirm": "Chantier#2026Kribi",
-        },
-        format="json",
-    ).status_code == 200
+    assert (
+        api.post(
+            "/api/auth/password/reset/confirm/",
+            {
+                "phone": phone,
+                "code": code,
+                "new_password": "Chantier#2026Kribi",
+                "new_password_confirm": "Chantier#2026Kribi",
+            },
+            format="json",
+        ).status_code
+        == 200
+    )
 
     # Le refresh token existant est révoqué (blacklist).
     replay = api.post("/api/auth/token/refresh/", {"refresh": refresh_token}, format="json")
@@ -200,8 +211,11 @@ def test_confirm_reset_cannot_reuse_a_code(active_user, api, phone, reset_otp):
     assert api.post("/api/auth/password/reset/confirm/", payload, format="json").status_code == 200
     second = api.post(
         "/api/auth/password/reset/confirm/",
-        {**payload, "new_password": "Encore#2026Bafang",
-         "new_password_confirm": "Encore#2026Bafang"},
+        {
+            **payload,
+            "new_password": "Encore#2026Bafang",
+            "new_password_confirm": "Encore#2026Bafang",
+        },
         format="json",
     )
     assert second.status_code == 400
@@ -285,12 +299,11 @@ def test_confirm_reset_is_refused_for_inactive_account(api, phone, password, las
         },
         format="json",
     )
-    OTPCode.objects.filter(phone=phone).update(
-        created_at=timezone.now() - timedelta(seconds=120)
+    OTPCode.objects.filter(phone=phone).update(created_at=timezone.now() - timedelta(seconds=120))
+    assert (
+        api.post("/api/auth/password/reset/request/", {"phone": phone}, format="json").status_code
+        == 200
     )
-    assert api.post(
-        "/api/auth/password/reset/request/", {"phone": phone}, format="json"
-    ).status_code == 200
     code = last_sms_code()
 
     response = api.post(
@@ -344,13 +357,19 @@ def test_reset_flow_is_journalised(active_user, api, phone, reset_otp):
         format="json",
     )
     actions = set(ActivityLog.objects.values_list("action", flat=True))
-    assert {"PASSWORD_RESET_REQUESTED", "PASSWORD_RESET_CONFIRMED", "OTP_SENT", "OTP_VERIFIED"} <= actions
+    assert {
+        "PASSWORD_RESET_REQUESTED",
+        "PASSWORD_RESET_CONFIRMED",
+        "OTP_SENT",
+        "OTP_VERIFIED",
+    } <= actions
     entry = ActivityLog.objects.get(action="PASSWORD_RESET_CONFIRMED")
     assert entry.actor_id == active_user.pk
     assert "sessions_revoked" in entry.metadata
 
 
 # --- Changement de mot de passe (connecté) ------------------------------------
+
 
 @pytest.mark.django_db
 def test_password_change_requires_current_password(active_user, api, password):

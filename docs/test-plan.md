@@ -40,7 +40,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml exec web pytest
 | MVP-002 OTP | expiration · code erroné · réutilisation · `purpose` incompatible · max tentatives · renvoi limité (numéro + IP) · stockage haché |
 | MVP-003 Session | non confirmé refusé · token expiré · refresh rotation · refresh révoqué · logout blacklist · pas de boucle de retry |
 | MVP-004 RBAC | **matrice paramétrée** : chaque permission critique × test positif + test négatif ; projet non autorisé → 404 ; action interdite → 403 |
-| MVP-005 Org/Projets | création · rattachement obligatoire à une organisation · liste filtrée/paginée · changement de rôle journalisé · `assert_num_queries` sur la liste |
+| MVP-005 Org/Projets | création (org + projet) · rattachement obligatoire à une organisation · liste filtrée/paginée · non-membre → 404 · action interdite → 403 · dates incohérentes refusées · code projet unique par organisation · budget FCFA entier (centimes refusés) · dernier responsable protégé · changement de rôle journalisé (ancien/nouveau) · `CaptureQueriesContext` sur les listes (pas de N+1) |
 | MVP-006 Jalons/Tâches | création · dates incohérentes refusées · avancement calculé serveur · tâche en retard détectée · clôture · permissions |
 | MVP-007 Preuve | upload valide · fichier invalide (type/taille) · GPS absent (`gps_status=UNAVAILABLE`) · GPS refusé (`DENIED`) · hash enregistré · thumbnail généré |
 | MVP-008 Validation | validateur autorisé · non autorisé (403) · rejet avec commentaire obligatoire · historique append-only · preuve rejetée consultable |

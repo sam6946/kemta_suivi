@@ -50,9 +50,13 @@ def test_unknown_phone_and_wrong_password_give_the_same_answer(active_user, api,
 @pytest.mark.django_db
 def test_account_is_locked_after_repeated_failures(active_user, api, phone):
     for _ in range(settings.LOGIN_MAX_FAILED_ATTEMPTS):
-        api.post("/api/auth/login/", {"phone": phone, "password": "Mauvais#2026Douala"}, format="json")
+        api.post(
+            "/api/auth/login/", {"phone": phone, "password": "Mauvais#2026Douala"}, format="json"
+        )
 
-    response = api.post("/api/auth/login/", {"phone": phone, "password": "Kemta#2026Douala"}, format="json")
+    response = api.post(
+        "/api/auth/login/", {"phone": phone, "password": "Kemta#2026Douala"}, format="json"
+    )
     assert response.status_code == 429
     assert response.data["error"]["code"] == "account_locked"
     assert User.objects.get(phone=phone).locked_until is not None

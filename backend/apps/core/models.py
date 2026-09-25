@@ -98,6 +98,15 @@ class ActivityLog(models.Model):
         PASSWORD_CHANGED = "PASSWORD_CHANGED", "Mot de passe modifié"
         EMAIL_ADDED = "EMAIL_ADDED", "Email ajouté"
         EMAIL_VERIFIED = "EMAIL_VERIFIED", "Email vérifié"
+        # Organisations, projets et membres (phase 3)
+        ORG_CREATED = "ORG_CREATED", "Organisation créée"
+        ORG_UPDATED = "ORG_UPDATED", "Organisation modifiée"
+        PROJECT_CREATED = "PROJECT_CREATED", "Projet créé"
+        PROJECT_UPDATED = "PROJECT_UPDATED", "Projet modifié"
+        PROJECT_ARCHIVED = "PROJECT_ARCHIVED", "Projet archivé"
+        MEMBER_ADDED = "MEMBER_ADDED", "Membre ajouté"
+        MEMBER_ROLE_CHANGED = "MEMBER_ROLE_CHANGED", "Rôle modifié"
+        MEMBER_REMOVED = "MEMBER_REMOVED", "Membre retiré"
 
     id = models.BigAutoField(primary_key=True)
     actor = models.ForeignKey(
@@ -111,6 +120,22 @@ class ActivityLog(models.Model):
     action = models.CharField("action", max_length=48, choices=Action.choices, db_index=True)
     entity_type = models.CharField("type d'entité", max_length=64, blank=True, db_index=True)
     entity_id = models.CharField("identifiant d'entité", max_length=64, blank=True, db_index=True)
+    project = models.ForeignKey(
+        "projects.Project",
+        verbose_name="projet",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="activity_events",
+    )
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        verbose_name="organisation",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="activity_events",
+    )
     metadata = models.JSONField("métadonnées", default=dict, blank=True)
     ip_address = models.GenericIPAddressField("adresse IP", null=True, blank=True)
     user_agent = models.CharField("agent utilisateur", max_length=200, blank=True)

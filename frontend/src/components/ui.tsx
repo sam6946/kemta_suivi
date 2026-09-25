@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 
 export function AuthLayout({
   title,
@@ -38,17 +38,35 @@ export function Field({
   error?: string;
   children: ReactNode;
 }) {
+  // Association explicite label ↔ champ (`htmlFor`/`id`) : indispensable pour les
+  // lecteurs d'écran et pour les tests, l'indication n'étant pas intégrée au libellé.
+  const id = useId();
+  const hintId = `${id}-hint`;
+
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<{ id?: string; "aria-describedby"?: string }>, {
+        id: (children.props as { id?: string }).id ?? id,
+        "aria-describedby": hint ? hintId : undefined,
+      })
+    : children;
+
   return (
-    <label className="field">
-      <span className="field-label">{label}</span>
-      {children}
-      {hint ? <span className="field-hint">{hint}</span> : null}
+    <div className="field">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      {control}
+      {hint ? (
+        <span className="field-hint" id={hintId}>
+          {hint}
+        </span>
+      ) : null}
       {error ? (
         <span className="field-error" role="alert">
           {error}
         </span>
       ) : null}
-    </label>
+    </div>
   );
 }
 

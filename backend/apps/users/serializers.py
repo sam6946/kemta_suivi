@@ -139,9 +139,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=32, trim_whitespace=True)
     code = serializers.CharField(min_length=4, max_length=8, trim_whitespace=True)
     new_password = serializers.CharField(write_only=True, style={"input_type": "password"})
-    new_password_confirm = serializers.CharField(
-        write_only=True, style={"input_type": "password"}
-    )
+    new_password_confirm = serializers.CharField(write_only=True, style={"input_type": "password"})
 
     def validate_phone(self, value: str) -> str:
         normalized, error = normalize_phone(value)
@@ -158,9 +156,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class PasswordChangeSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, style={"input_type": "password"})
     new_password = serializers.CharField(write_only=True, style={"input_type": "password"})
-    new_password_confirm = serializers.CharField(
-        write_only=True, style={"input_type": "password"}
-    )
+    new_password_confirm = serializers.CharField(write_only=True, style={"input_type": "password"})
 
     def validate_current_password(self, value: str) -> str:
         user = self.context["request"].user

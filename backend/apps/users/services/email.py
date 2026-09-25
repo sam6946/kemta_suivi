@@ -28,7 +28,7 @@ def deliver_email(to: str, subject: str, message: str) -> None:
     if settings.EMAIL_BACKEND_PROVIDER == "console":
         outbox.append({"to": to, "subject": subject, "message": message})
         if settings.DEBUG:
-            print(f"[EMAIL:{to}] {subject} — {message}")  # noqa: T201
+            print(f"[EMAIL:{to}] {subject} — {message}")
         return
     from django.core.mail import send_mail
 

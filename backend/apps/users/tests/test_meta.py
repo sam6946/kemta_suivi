@@ -18,23 +18,17 @@ def test_roles_endpoint_is_public_and_cached(api):
 
 
 @pytest.mark.django_db
-def test_email_can_be_added_later_with_otp(
-    active_user, api, phone, password, last_email_code
-):
+def test_email_can_be_added_later_with_otp(active_user, api, phone, password, last_email_code):
     """L'email n'est pas demandé à l'inscription : il est ajouté puis vérifié plus tard."""
     assert active_user.email in (None, "")
 
     login = api.post("/api/auth/login/", {"phone": phone, "password": password}, format="json")
     api.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
 
-    request = api.post(
-        "/api/auth/email/request/", {"email": "arnaud@example.cm"}, format="json"
-    )
+    request = api.post("/api/auth/email/request/", {"email": "arnaud@example.cm"}, format="json")
     assert request.status_code == 200, request.content
 
-    otp = OTPCode.objects.filter(
-        user=active_user, purpose=OTPCode.Purpose.EMAIL_VERIFY
-    ).first()
+    otp = OTPCode.objects.filter(user=active_user, purpose=OTPCode.Purpose.EMAIL_VERIFY).first()
     assert otp is not None and otp.is_usable
     assert otp.verify(last_email_code())  # le code part bien par email
 

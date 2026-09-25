@@ -79,14 +79,10 @@ def request_password_reset(phone: str, request=None) -> dict:
             metadata={"outcome": "not_activated"},
             request=request,
         )
-        issue_otp(
-            purpose=OTPCode.Purpose.SIGNUP, phone=user.phone, user=user, request=request
-        )
+        issue_otp(purpose=OTPCode.Purpose.SIGNUP, phone=user.phone, user=user, request=request)
         return _neutral_payload()
 
-    issue_otp(
-        purpose=OTPCode.Purpose.PASSWORD_RESET, phone=user.phone, user=user, request=request
-    )
+    issue_otp(purpose=OTPCode.Purpose.PASSWORD_RESET, phone=user.phone, user=user, request=request)
     log_event(
         "PASSWORD_RESET_REQUESTED",
         actor=user,
@@ -98,9 +94,7 @@ def request_password_reset(phone: str, request=None) -> dict:
     return _neutral_payload()
 
 
-def confirm_password_reset(
-    *, phone: str, code: str, new_password: str, request=None
-) -> User:
+def confirm_password_reset(*, phone: str, code: str, new_password: str, request=None) -> User:
     """Valide l'OTP puis change le mot de passe (opération atomique sur l'essentiel)."""
     user = User.all_objects.filter(phone=phone).first()
 

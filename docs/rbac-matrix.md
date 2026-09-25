@@ -90,6 +90,9 @@ modification est journalisée (`MEMBER_ROLE_CHANGED`).
   visible mais l'action interdite, conformément aux critères d'acceptation de MVP-005.
 - Constantes centralisées dans `apps/users/roles.py` : une seule source de vérité, partagée avec
   le frontend via `GET /api/meta/roles/`.
+- Résolution des capacités projets dans `apps/projects/access.py` : `resolve_capabilities()` pour
+  un projet, `build_capabilities_map()` pour une collection (une passe, pas de N+1), et
+  `permissions_payload()` pour le champ `permissions` de l'API.
 - **Chaque permission critique a un test positif et un test négatif** (exigence MVP-004) :
   `tests/permissions/test_matrix.py` génère la matrice sous forme de tests paramétrés
   (rôle × action × attendu), ce qui rend toute divergence doc/code visible immédiatement.

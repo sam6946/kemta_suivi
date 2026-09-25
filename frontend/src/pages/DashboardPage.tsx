@@ -5,21 +5,41 @@
  * les capacités réellement accordées par le backend et l'ajout facultatif de l'email.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { authApi } from "../api/auth";
 import { ApiError } from "../api/client";
+import { organizationsApi } from "../api/organizations";
+import { projectsApi } from "../api/projects";
 import { useAuth } from "../auth/AuthContext";
 import { messageForErrorCode } from "../auth/passwordPolicy";
 import { Alert, Button, Field } from "../components/ui";
 
 export default function DashboardPage() {
   const { user, logout, refreshProfile } = useAuth();
+  const [counts, setCounts] = useState<{ projects: number; organizations: number } | null>(null);
   const [email, setEmail] = useState(user?.email ?? "");
   const [code, setCode] = useState("");
   const [stage, setStage] = useState<"idle" | "code">("idle");
   const [feedback, setFeedback] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const loadCounts = useCallback(async () => {
+    try {
+      const [projectPage, organizationPage] = await Promise.all([
+        projectsApi.list(),
+        organizationsApi.list(),
+      ]);
+      setCounts({ projects: projectPage.count, organizations: organizationPage.count });
+    } catch {
+      setCounts(null); // l'échec d'un compteur ne doit pas casser le tableau de bord
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCounts();
+  }, [loadCounts]);
 
   if (!user) return null;
 
@@ -74,21 +94,21 @@ export default function DashboardPage() {
         </p>
         <div className="grid">
           <div className="metric">
-            <div className="metric-label">Projets visibles</div>
-            <div className="metric-value">—</div>
+            <div className="metric-label">Projets accessibles</div>
+            <div className="metric-value">{counts ? counts.projects : "…"}</div>
           </div>
           <div className="metric">
-            <div className="metric-label">Preuves en attente</div>
-            <div className="metric-value">—</div>
-          </div>
-          <div className="metric">
-            <div className="metric-label">Budget consommé</div>
-            <div className="metric-value">— FCFA</div>
+            <div className="metric-label">Organisations</div>
+            <div className="metric-value">{counts ? counts.organizations : "…"}</div>
           </div>
         </div>
+        <div className="links" style={{ flexDirection: "row", gap: 16 }}>
+          <Link to="/projets">Voir mes projets</Link>
+          <Link to="/organisations">Mes organisations</Link>
+        </div>
         <p className="field-hint" style={{ marginTop: 12 }}>
-          Les indicateurs du chantier s'afficheront ici dès la livraison de l'endpoint agrégé
-          (phase 8). Les valeurs ne sont jamais simulées : aucune donnée mockée dans le produit.
+          Les indicateurs consolidés (avancement, budget consommé, alertes) arriveront avec
+          l'endpoint agrégé de la phase 8. Aucune valeur n'est simulée ici.
         </p>
       </section>
 

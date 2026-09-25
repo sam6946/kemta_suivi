@@ -86,6 +86,21 @@ form {
   font-weight: 600;
 }
 
+.field input,
+.field select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 16px;
+  background: #f8fafc;
+}
+
+.field select:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  background: #fff;
+}
+
 .field input {
   border: 1px solid var(--line);
   border-radius: 10px;

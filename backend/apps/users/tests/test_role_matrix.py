@@ -92,6 +92,4 @@ def test_roles_payload_is_stable_for_the_frontend():
     for item in payload:
         assert item["label"]
         assert set(item["capabilities"]) <= set(ALL_CAPABILITIES)
-        assert item["capabilities"] == sorted(
-            ROLE_CAPABILITIES.get(item["code"], frozenset())
-        )
+        assert item["capabilities"] == sorted(ROLE_CAPABILITIES.get(item["code"], frozenset()))

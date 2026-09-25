@@ -10,4 +10,6 @@ urlpatterns = [
     path("api/dev/outbox/", DevOutboxView.as_view(), name="dev-outbox"),
     path("api/auth/", include("apps.users.urls")),
     path("api/meta/", include("apps.users.urls_meta")),
+    path("api/", include("apps.organizations.urls")),
+    path("api/", include("apps.projects.urls")),
 ]

@@ -1,8 +1,8 @@
 """Réglages dédiés aux tests : aucune infrastructure externe requise."""
 
-from .settings import *  # noqa: F401,F403
+from .settings import *
 
-ENV = "test"  # noqa: F811
+ENV = "test"
 DEBUG = False
 DJANGO_ENV = "test"
 

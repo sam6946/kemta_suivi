@@ -121,9 +121,7 @@ def test_sms_console_provider_does_not_leak_outside_debug(active_user, settings,
 
 
 @pytest.mark.django_db
-def test_tokens_issued_before_password_change_are_rejected(
-    active_user, api, phone, password
-):
+def test_tokens_issued_before_password_change_are_rejected(active_user, api, phone, password):
     from datetime import timedelta
 
     from django.utils import timezone

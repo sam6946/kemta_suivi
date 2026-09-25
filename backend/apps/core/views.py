@@ -33,7 +33,7 @@ def check_redis() -> tuple[bool, int]:
     try:
         cache.set(CACHE_PROBE_KEY, "1", CACHE_PROBE_TTL)
         ok = cache.get(CACHE_PROBE_KEY) == "1"
-    except Exception:  # noqa: BLE001 - Redis indisponible ne doit pas faire 500
+    except Exception:
         return False, _ms(started)
     return ok, _ms(started)
 
@@ -51,8 +51,11 @@ class HealthView(APIView):
     def get(self, request):
         db_ok, db_ms = check_database()
         cache_ok, cache_ms = check_redis()
-        checks = {"application": "ok", "database": "ok" if db_ok else "down",
-                  "cache": "ok" if cache_ok else "down"}
+        checks = {
+            "application": "ok",
+            "database": "ok" if db_ok else "down",
+            "cache": "ok" if cache_ok else "down",
+        }
         healthy = db_ok and cache_ok
         payload = {
             "status": "ok" if healthy else "degraded",
@@ -63,4 +66,6 @@ class HealthView(APIView):
             "environment": getattr(settings, "ENV", "local"),
             "checks_ms": {"database": db_ms, "redis": cache_ms},
         }
-        return Response(payload, status=status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(
+            payload, status=status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+        )

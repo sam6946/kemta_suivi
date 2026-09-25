@@ -1,7 +1,6 @@
 """Phase 1 — `/api/health/` doit vérifier l'application, la base et le cache."""
 
 import pytest
-from django.urls import reverse
 
 
 @pytest.mark.django_db
@@ -28,9 +27,7 @@ def test_health_does_not_leak_secrets(api, settings):
 def test_health_degraded_when_database_down(api, monkeypatch):
     from apps.core import views as health_views
 
-    monkeypatch.setattr(
-        health_views, "check_database", lambda: (False, 1)
-    )
+    monkeypatch.setattr(health_views, "check_database", lambda: (False, 1))
     response = api.get("/api/health/")
     assert response.status_code == 503
     assert response.data["status"] == "degraded"

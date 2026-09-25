@@ -2,8 +2,7 @@
 
 - Refuse de s'exécuter si `DJANGO_ENV=production` (sauf `--force`).
 - Aucune donnée n'est simulée côté produit : ces comptes servent aux démos et aux tests.
-- Les projets, jalons, preuves et lignes budgétaires seront ajoutés ici en phase 3 et suivantes,
-  avec des montants réalistes en FCFA (voir `docs/test-plan.md` §4).
+- Les jalons, preuves et lignes budgétaires seront ajoutés ici aux phases 4 et suivantes.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils.text import slugify as _slugify
 
 from apps.users.models import User
 from apps.users.roles import ALL_ROLES, ROLE_LABELS
@@ -32,6 +32,103 @@ DEMO_PEOPLE = [
 ]
 
 
+ORGANIZATIONS = [
+    {
+        "key": "promoteur",
+        "name": "KEMTA Promotion Douala",
+        "type": "PROMOTER",
+        "city": "Douala",
+        "owner_role": "ORG_OWNER",
+    },
+    {
+        "key": "pme",
+        "name": "BTP Kribi SARL",
+        "type": "PME",
+        "city": "Kribi",
+        "owner_role": "CONTRACTOR",
+    },
+    {
+        "key": "be",
+        "name": "Ingénierie Littoral",
+        "type": "ENGINEERING_FIRM",
+        "city": "Douala",
+        "owner_role": "ENGINEER",
+    },
+]
+
+# Projets réalistes (contexte camerounais) — montants entiers en FCFA.
+PROJECTS = [
+    {
+        "organization": "promoteur",
+        "name": "Résidence Bonamoussadi — tranche 1",
+        "code": "RBS-T1",
+        "city": "Douala",
+        "region": "Littoral",
+        "location_label": "Bonamoussadi, avenue principale",
+        "latitude": "4.089100",
+        "longitude": "9.740600",
+        "budget_total": 85_000_000,
+        "status": "ACTIVE",
+        "planned_start_date": "2026-01-12",
+        "planned_end_date": "2026-12-18",
+        "members": {
+            "PROJECT_OWNER": {},
+            "ENGINEER": {},
+            "CONTRACTOR": {},
+            "FIELD_AGENT": {},
+            "VALIDATOR": {"can_validate_evidence": True},
+            "FINANCE": {"can_manage_finance": True},
+            "INVESTOR": {},
+        },
+    },
+    {
+        "organization": "promoteur",
+        "name": "Immeuble Akwa — tranche 2",
+        "code": "AKW-T2",
+        "city": "Douala",
+        "region": "Littoral",
+        "location_label": "Akwa, rue Castelnau",
+        "latitude": "4.051100",
+        "longitude": "9.767900",
+        "budget_total": 145_000_000,
+        "status": "ACTIVE",
+        "planned_start_date": "2026-03-02",
+        "planned_end_date": "2027-06-30",
+        "members": {"PROJECT_OWNER": {}, "ENGINEER": {}, "FINANCE": {"can_manage_finance": True}},
+    },
+    {
+        "organization": "pme",
+        "name": "Voie de contournement Kribi",
+        "code": "VCK-01",
+        "city": "Kribi",
+        "region": "Sud",
+        "location_label": "Entrée nord de Kribi",
+        "latitude": "2.937300",
+        "longitude": "9.910000",
+        "budget_total": 320_000_000,
+        "status": "ACTIVE",
+        "planned_start_date": "2025-11-03",
+        "planned_end_date": "2026-11-30",
+        "members": {"PROJECT_OWNER": {}, "CONTRACTOR": {}, "FIELD_AGENT": {}},
+    },
+    {
+        "organization": "be",
+        "name": "Réhabilitation école de Nkolbisson",
+        "code": "REC-NKB",
+        "city": "Yaoundé",
+        "region": "Centre",
+        "location_label": "Nkolbisson, quartier Marché",
+        "latitude": "3.872000",
+        "longitude": "11.450000",
+        "budget_total": 22_500_000,
+        "status": "DRAFT",
+        "planned_start_date": "2026-02-16",
+        "planned_end_date": "2026-08-28",
+        "members": {"ENGINEER": {}, "VALIDATOR": {"can_validate_evidence": True}},
+    },
+]
+
+
 class Command(BaseCommand):
     help = "Crée les comptes de démonstration (données de développement uniquement)."
 
@@ -45,6 +142,11 @@ class Command(BaseCommand):
             "--password",
             default=DEMO_PASSWORD,
             help="Mot de passe des comptes de démonstration (développement uniquement).",
+        )
+        parser.add_argument(
+            "--skip-projects",
+            action="store_true",
+            help="Ne créer que les comptes (sans organisations, projets ni membres).",
         )
 
     @transaction.atomic
@@ -81,6 +183,13 @@ class Command(BaseCommand):
                 f"Mot de passe : {options['password']} (développement uniquement)."
             )
         )
+        if not options["skip_projects"]:
+            organizations, projects, memberships = self._seed_projects()
+            self.stdout.write(
+                f"{organizations} organisation(s), {projects} projet(s), "
+                f"{memberships} appartenance(s) créés."
+            )
+
         if ALL_ROLES:
             self.stdout.write("Rôles disponibles : " + ", ".join(ROLE_LABELS[r] for r in ALL_ROLES))
         self.stdout.write(
@@ -88,3 +197,73 @@ class Command(BaseCommand):
                 "Données de DÉVELOPPEMENT : ne pas exécuter sur une base de production."
             )
         )
+
+    # ------------------------------------------------------------------
+    # Organisations, projets et membres de démonstration (phase 3)
+    # ------------------------------------------------------------------
+    def _seed_projects(self) -> tuple[int, int, int]:
+        from apps.organizations.models import Organization, OrganizationMember
+        from apps.projects.models import Project, ProjectMember
+
+        users_by_role = {user.role: user for user in User.objects.all()}
+
+        def user_for(role: str):
+            return users_by_role.get(role) or User.objects.filter(role=role).first()
+
+        organizations: dict[str, Organization] = {}
+        created_organizations = 0
+        for spec in ORGANIZATIONS:
+            owner = user_for(spec["owner_role"]) or next(iter(users_by_role.values()))
+            organization, created = Organization.objects.get_or_create(
+                slug=_slugify(spec["name"]),
+                defaults={
+                    "name": spec["name"],
+                    "type": spec["type"],
+                    "city": spec["city"],
+                    "owner": owner,
+                },
+            )
+            created_organizations += int(created)
+            OrganizationMember.objects.get_or_create(
+                organization=organization,
+                user=owner,
+                defaults={"role": "ORG_OWNER"},
+            )
+            organizations[spec["key"]] = organization
+
+        created_projects = 0
+        created_memberships = 0
+        for spec in PROJECTS:
+            organization = organizations[spec["organization"]]
+            creator = user_for("PROJECT_OWNER") or organization.owner
+            project, created = Project.objects.get_or_create(
+                organization=organization,
+                code=spec["code"],
+                defaults={
+                    "name": spec["name"],
+                    "city": spec["city"],
+                    "region": spec["region"],
+                    "location_label": spec["location_label"],
+                    "latitude": spec["latitude"],
+                    "longitude": spec["longitude"],
+                    "budget_total": spec["budget_total"],
+                    "status": spec["status"],
+                    "planned_start_date": spec["planned_start_date"],
+                    "planned_end_date": spec["planned_end_date"],
+                    "created_by": creator,
+                },
+            )
+            created_projects += int(created)
+
+            for role, flags in spec["members"].items():
+                member_user = user_for(role)
+                if member_user is None:
+                    continue
+                _, membership_created = ProjectMember.objects.get_or_create(
+                    project=project,
+                    user=member_user,
+                    defaults={"role": role, **flags},
+                )
+                created_memberships += int(membership_created)
+
+        return created_organizations, created_projects, created_memberships

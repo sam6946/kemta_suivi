@@ -29,13 +29,13 @@ from apps.users.serializers import (
 )
 from apps.users.services import sms
 from apps.users.services.otp import issue_otp, verify_otp
-from apps.users.services.phone import mask_phone
 from apps.users.services.password import (
     change_password,
     confirm_password_reset,
     mark_email_verified,
     request_password_reset,
 )
+from apps.users.services.phone import mask_phone
 from apps.users.throttling import LoginThrottle, OTPRequestThrottle, PasswordResetThrottle
 
 
@@ -74,9 +74,7 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        issue_otp(
-            purpose=OTPCode.Purpose.SIGNUP, phone=user.phone, user=user, request=request
-        )
+        issue_otp(purpose=OTPCode.Purpose.SIGNUP, phone=user.phone, user=user, request=request)
         log_event(
             "USER_REGISTERED",
             actor=user,
@@ -160,7 +158,9 @@ class OTPResendView(APIView):
                 user=user,
                 request=request,
             )
-            log_event("OTP_RESEND", actor=user, entity_type="User", entity_id=user.pk, request=request)
+            log_event(
+                "OTP_RESEND", actor=user, entity_type="User", entity_id=user.pk, request=request
+            )
         return Response(response_payload, status=status.HTTP_200_OK)
 
 
@@ -178,9 +178,7 @@ class LoginView(APIView):
 
         user = User.objects.filter(phone=data["phone"]).first()
         # Message identique pour numéro inconnu et mot de passe erroné.
-        invalid = KemtaAPIError(
-            "invalid_credentials", "Identifiants incorrects.", http_status=401
-        )
+        invalid = KemtaAPIError("invalid_credentials", "Identifiants incorrects.", http_status=401)
 
         if user is None or not user.check_password(data["password"]):
             if user is not None:
@@ -217,7 +215,9 @@ class LoginView(APIView):
             )
 
         user.register_login_success()
-        log_event("LOGIN_SUCCESS", actor=user, entity_type="User", entity_id=user.pk, request=request)
+        log_event(
+            "LOGIN_SUCCESS", actor=user, entity_type="User", entity_id=user.pk, request=request
+        )
         return Response(auth_payload(user), status=status.HTTP_200_OK)
 
 
@@ -234,7 +234,13 @@ class LogoutView(APIView):
             RefreshToken(refresh_token).blacklist()
         except TokenError:
             raise KemtaAPIError("invalid_token", "Jeton invalide ou déjà révoqué.") from None
-        log_event("LOGOUT", actor=request.user, entity_type="User", entity_id=request.user.pk, request=request)
+        log_event(
+            "LOGOUT",
+            actor=request.user,
+            entity_type="User",
+            entity_id=request.user.pk,
+            request=request,
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

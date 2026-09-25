@@ -25,7 +25,9 @@ def normalize_phone(raw: str, default_region: str | None = None) -> tuple[str | 
         # Format national avec préfixe « 0 » (ex. « 06 90 12 34 56 » au Cameroun).
         cleaned = cleaned.lstrip("0") or cleaned
 
-    region = default_region or (settings.PHONE_ALLOWED_REGIONS[0] if settings.PHONE_ALLOWED_REGIONS else "CM")
+    region = default_region or (
+        settings.PHONE_ALLOWED_REGIONS[0] if settings.PHONE_ALLOWED_REGIONS else "CM"
+    )
     try:
         parsed = phonenumbers.parse(cleaned, region)
     except phonenumbers.NumberParseException:

@@ -109,7 +109,7 @@ Erreurs : `otp_invalid` · `otp_max_attempts` · `password_too_weak` · `passwor
 | Méthode | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/meta/roles/` | Les 9 rôles + libellés + capacités (source unique partagée avec le frontend) |
-| `GET` | `/api/meta/status/` | Tous les `TextChoices` (statuts projet/jalon/tâche/preuve/dépense) |
+| `GET` | `/api/meta/status/` | Tous les `TextChoices` (statuts projet/jalon/tâche/preuve/dépense) — phase 4 |
 | `GET` | `/api/health/` | Santé application + PostgreSQL + Redis (détail en §8) |
 
 ---
@@ -127,9 +127,35 @@ Erreurs : `otp_invalid` · `otp_max_attempts` · `password_too_weak` · `passwor
 | `GET`/`POST` | `/api/projects/{id}/members/` | membre / `PROJECT_OWNER`+ |
 | `PATCH`/`DELETE` | `/api/projects/{id}/members/{user_id}/` | `PROJECT_OWNER`+ |
 
-Filtres projets : `?status=&organization=&search=&page=`. Tri : `?ordering=-created_at`.
-Sérialisation : `select_related("organization", "created_by")` + `prefetch_related("members__user")`
-→ pas de N+1 (asserté par `django_assert_num_queries` dans les tests).
+**Filtres** projets : `?status=DRAFT,ACTIVE&organization=&search=&ordering=&page=&page_size=`
+(tri supporté : `created_at`, `name`, `status`, `budget_total`, avec `-` pour décroissant).
+Recherche sur `name`, `code`, `city`, `location_label`.
+
+**Ajout d'un membre** (`POST .../members/`) : le compte doit exister.
+
+```json
+{ "phone": "+2376XXXXXXXX", "role": "ENGINEER",
+  "can_validate_evidence": false, "can_manage_finance": false }
+```
+`404 user_not_found` (numéro inconnu) · `409 user_not_activated` · `409 member_already_exists` ·
+`403 permission_denied` (rôle sans `manage_members`).
+
+**Champ `permissions`** renvoyé par les endpoints projet — calculé par le backend, jamais déduit
+côté client :
+
+```json
+{ "edit_project": true, "archive_project": true, "manage_members": true,
+  "capture_evidence": true, "validate_evidence": false,
+  "view_finance": true, "manage_finance": false }
+```
+
+**Sémantique d'accès** : projet hors périmètre → `404` (l'objet n'existe pas pour l'utilisateur) ;
+projet visible mais action interdite → `403`. Voir `docs/flows/project.md` §3.
+
+**Performance** : compteurs annotés (`Count`, distinct) et relations chargées via
+`select_related` ; les permissions d'une page entière sont résolues en une passe
+(`build_capabilities_map`). Les seuils de requêtes sont verrouillés par
+`test_project_list_has_no_n_plus_one` et `test_organization_list_has_no_n_plus_one`.
 
 ## 5. Jalons et tâches (Phase 4 — MVP-006)
 

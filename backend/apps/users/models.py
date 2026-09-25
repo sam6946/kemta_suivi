@@ -116,9 +116,7 @@ class User(SoftDeleteModel, AbstractUser):
         self.save(update_fields=["failed_login_count"])
         self.refresh_from_db(fields=["failed_login_count"])
         if self.failed_login_count >= settings.LOGIN_MAX_FAILED_ATTEMPTS:
-            self.locked_until = timezone.now() + timedelta(
-                seconds=settings.LOGIN_LOCK_SECONDS
-            )
+            self.locked_until = timezone.now() + timedelta(seconds=settings.LOGIN_LOCK_SECONDS)
             self.failed_login_count = 0
             self.save(update_fields=["locked_until", "failed_login_count"])
             return True
@@ -156,9 +154,7 @@ class OTPCode(models.Model):
     )
     phone = models.CharField("téléphone", max_length=20, blank=True, db_index=True)
     email = models.EmailField("email", blank=True, null=True, unique=True)
-    channel = models.CharField(
-        "canal", max_length=8, choices=Channel.choices, default=Channel.SMS
-    )
+    channel = models.CharField("canal", max_length=8, choices=Channel.choices, default=Channel.SMS)
     purpose = models.CharField("usage", max_length=24, choices=Purpose.choices, db_index=True)
     code_hash = models.CharField("empreinte du code", max_length=128)
     salt = models.CharField("sel", max_length=64)

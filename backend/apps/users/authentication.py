@@ -34,7 +34,7 @@ class KemtaJWTAuthentication(JWTAuthentication):
                 **{api_settings.USER_ID_FIELD: validated_token[api_settings.USER_ID_CLAIM]}
             )
         except user_model.DoesNotExist:
-            raise InvalidToken("Utilisateur introuvable.", code="user_not_found")
+            raise InvalidToken("Utilisateur introuvable.", code="user_not_found") from None
 
         if not user.is_active:
             raise InvalidToken("Compte inactif.", code="user_inactive")

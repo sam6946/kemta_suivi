@@ -37,10 +37,7 @@ def _enforce_send_limits(
     last = queryset.order_by("-created_at").first()
     if last and (now - last.created_at) < timedelta(seconds=settings.OTP_RESEND_COOLDOWN_SECONDS):
         retry_in = int(
-            (
-                settings.OTP_RESEND_COOLDOWN_SECONDS
-                - (now - last.created_at).total_seconds()
-            )
+            settings.OTP_RESEND_COOLDOWN_SECONDS - (now - last.created_at).total_seconds()
         )
         raise KemtaAPIError(
             "otp_resend_limited",
@@ -89,7 +86,7 @@ def issue_otp(
     phone = (phone or "").strip() or None
     email = (email or "").strip().lower() or None
     ip_address = request.META.get("REMOTE_ADDR") if request else None
-    user_agent = (request.META.get("HTTP_USER_AGENT", "")[:200] if request else "")
+    user_agent = request.META.get("HTTP_USER_AGENT", "")[:200] if request else ""
 
     _enforce_send_limits(phone=phone, email=email, purpose=purpose, ip_address=ip_address)
 
@@ -218,9 +215,7 @@ def verify_otp(
         raise KemtaAPIError(
             "otp_invalid",
             "Code invalide ou expiré.",
-            details={
-                "remaining_attempts": max(settings.OTP_MAX_ATTEMPTS - otp.attempts, 0)
-            },
+            details={"remaining_attempts": max(settings.OTP_MAX_ATTEMPTS - otp.attempts, 0)},
         )
 
     otp.consume()

@@ -9,8 +9,9 @@ from apps.core.models import ActivityLog
 
 @pytest.mark.django_db
 def test_log_event_creates_entry():
-    entry = log_event("USER_REGISTERED", entity_type="User", entity_id=42,
-                      metadata={"phone": "+237690000000"})
+    entry = log_event(
+        "USER_REGISTERED", entity_type="User", entity_id=42, metadata={"phone": "+237690000000"}
+    )
     assert entry is not None
     assert entry.action == "USER_REGISTERED"
     assert entry.entity_id == "42"
@@ -22,8 +23,12 @@ def test_log_event_strips_secrets():
     entry = log_event(
         "PASSWORD_RESET_CONFIRMED",
         entity_type="User",
-        metadata={"password": "secret", "new_password": "secret2", "code": "123456",
-                  "sessions_revoked": 3},
+        metadata={
+            "password": "secret",
+            "new_password": "secret2",
+            "code": "123456",
+            "sessions_revoked": 3,
+        },
     )
     assert entry.metadata == {"sessions_revoked": 3}
 

@@ -48,6 +48,8 @@ def log_event(
     entity_type: str = "",
     entity_id=None,
     metadata: dict | None = None,
+    organization=None,
+    project=None,
     request=None,
 ) -> ActivityLog | None:
     """Crée un événement de journal.
@@ -62,6 +64,8 @@ def log_event(
             action=action,
             entity_type=entity_type,
             entity_id=str(entity_id) if entity_id is not None else "",
+            organization=organization,
+            project=project,
             metadata=_clean_metadata(metadata),
             ip_address=get_client_ip(request),
             user_agent=(request.META.get("HTTP_USER_AGENT", "")[:200] if request else ""),

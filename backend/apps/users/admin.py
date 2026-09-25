@@ -16,7 +16,10 @@ class UserAdmin(BaseUserAdmin):
     readonly_fields = ("last_login", "date_joined", "password_changed_at", "locked_until")
     fieldsets = (
         (None, {"fields": ("phone", "password")}),
-        (_("Informations personnelles"), {"fields": ("first_name", "last_name", "email", "language")}),
+        (
+            _("Informations personnelles"),
+            {"fields": ("first_name", "last_name", "email", "language")},
+        ),
         (
             _("Rôles et statut"),
             {"fields": ("role", "is_active", "is_phone_verified", "email_verified_at")},
@@ -40,7 +43,15 @@ class UserAdmin(BaseUserAdmin):
 class OTPCodeAdmin(admin.ModelAdmin):
     """Lecture seule : le code en clair n'existe nulle part."""
 
-    list_display = ("created_at", "phone", "email", "purpose", "expires_at", "consumed_at", "attempts")
+    list_display = (
+        "created_at",
+        "phone",
+        "email",
+        "purpose",
+        "expires_at",
+        "consumed_at",
+        "attempts",
+    )
     list_filter = ("purpose", "channel")
     search_fields = ("phone", "email")
 

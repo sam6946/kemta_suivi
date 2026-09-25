@@ -35,7 +35,7 @@ def deliver_sms(phone: str, message: str) -> None:
     if provider == "console":
         outbox.append({"phone": phone, "message": message})
         if settings.DEBUG:  # jamais en production
-            print(f"[SMS:{phone}] {message}")  # noqa: T201
+            print(f"[SMS:{phone}] {message}")
         return
     if provider == "real":
         _send_with_provider(phone, message)

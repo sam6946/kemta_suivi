@@ -4,16 +4,17 @@ Suivi de chantier (Cameroun) : preuves terrain **offline-first**, jalons et plan
 **FCFA**, journal d'activité. Backend Django/DRF + PostgreSQL/Redis/Celery, frontend
 React/TypeScript/Vite.
 
-**Avancement actuel : Phases 0 (cadrage) et 1 (fondations) livrées, Phase 2 (authentification,
-RBAC et **réinitialisation du mot de passe**) implémentée et testée.** Les chapitres suivants
-(projets, jalons, preuves, finances, dashboard) sont spécifiés et planifiés dans le backlog.
+**Avancement actuel : phases 0 (cadrage), 1 (fondations), 2 (authentification, RBAC et
+réinitialisation du mot de passe) et 3 (organisations, projets, membres) livrées et testées.**
+Suite : jalons et tâches (phase 4), preuves terrain (phase 5), offline (phase 6), finances
+(phase 7), dashboard agrégé (phase 8). Détail : [`docs/STATUS.md`](docs/STATUS.md).
 
 ## 1. Démarrage rapide avec Docker (chemin nominal)
 
 ```bash
 cp .env.example .env          # puis remplacez SECRET_KEY
 docker compose up -d --build  # db + redis + web + worker + beat + frontend
-docker compose exec web python manage.py seed_dev   # comptes de démonstration (dev)
+docker compose exec web python manage.py seed_dev   # comptes + organisations + projets (dev)
 ```
 
 - Frontend : <http://localhost:5173>
@@ -29,6 +30,9 @@ Comptes de démonstration (un par rôle) — création par `seed_dev`, **dévelo
 | Ingénieur | `+237 690 000 004` | `Kemta#2026Demo` |
 | Agent terrain | `+237 690 000 006` | `Kemta#2026Demo` |
 | Financier | `+237 690 000 008` | `Kemta#2026Demo` |
+
+`seed_dev` crée aussi 3 organisations (Douala, Kribi, Yaoundé) et 4 projets réalistes en FCFA
+(22,5 à 320 millions), avec leurs membres — de quoi naviguer immédiatement dans `/projets`.
 
 **Tester le parcours OTP sans téléphone** : en développement, le fournisseur SMS est un
 adaptateur console et l'écran d'activation comme l'écran de réinitialisation affichent un bouton
@@ -54,9 +58,10 @@ cd frontend && npm install && npm run dev
 ## 3. Tests
 
 ```bash
-cd backend && pytest                       # 143 tests, sans infrastructure externe
-cd backend && pytest --cov=apps --cov-report=term-missing
-cd frontend && npm test                    # 15 tests : politique de mot de passe + écrans « mot de passe oublié »
+cd backend && pytest                       # 252 tests, sans infrastructure externe
+cd backend && pytest --cov=apps            # couverture (≈ 94 %)
+cd backend && ruff check . && ruff format --check .    # lint + formatage
+cd frontend && npm test                    # 34 tests : mot de passe oublié, projets, membres, formatage FCFA
 cd frontend && npm run build               # vérification TypeScript + build
 ```
 
@@ -79,7 +84,23 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - Rate limiting par numéro/IP, enveloppe d'erreur uniforme avec `request_id`, logs structurés
   sans secret.
 
-## 5. Documentation
+## 5. Périmètre organisations / projets / membres (Phase 3)
+
+- **Organisation** : racine du périmètre (propriétaire + membres), un projet y est toujours rattaché.
+- **Projet** : nom, code unique par organisation, ville/région, coordonnées, rayon de périmètre,
+  devise **XAF**, budget en FCFA entiers, statut, dates prévues/réelles, avancement **calculé
+  côté serveur** (lecture seule).
+- **Membres** : rôle par projet + capacités fines (`can_validate_evidence`, `can_manage_finance`) ;
+  ajout d'un **compte existant** via son numéro de téléphone (invitation SMS hors périmètre MVP).
+- **Permissions** : le backend filtre les querysets (projet hors périmètre → 404) et renvoie un
+  champ `permissions` que le frontend utilise pour masquer les actions (objet visible mais action
+  interdite → 403).
+- **Journalisation** : `ORG_CREATED/UPDATED`, `PROJECT_CREATED/UPDATED/ARCHIVED`,
+  `MEMBER_ADDED/ROLE_CHANGED/REMOVED` (avec ancienne/nouvelle valeur).
+- Écrans : `/organisations` (liste + création) et `/projets` (liste, filtres, création),
+  `/projets/:id` (détail + gestion des membres).
+
+## 6. Documentation
 
 | Document | Contenu |
 |---|---|
@@ -91,18 +112,22 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 | [`docs/offline-sync.md`](docs/offline-sync.md) | Stratégie offline-first, file de synchronisation, conflits, cache |
 | [`docs/test-plan.md`](docs/test-plan.md) | Plan de tests, matrice fonctionnalité → tests, seed, E2E |
 | [`docs/flows/authentication.md`](docs/flows/authentication.md) | Flux inscription / OTP / connexion / **réinitialisation du mot de passe** |
+| [`docs/flows/project.md`](docs/flows/project.md) | Flux organisation → projet → membres, règles d'accès 403/404, performance |
+| [`docs/STATUS.md`](docs/STATUS.md) | État d'avancement phase par phase et fonctionnalité par fonctionnalité |
 
-## 6. Structure du dépôt
+## 7. Structure du dépôt
 
 ```
-backend/     config/ (settings, urls, celery) · apps/core (journal, santé, erreurs) ·
-             apps/users (identité, OTP, sessions, rôles) · tests
+backend/     config/ (settings, urls, celery) · apps/core (journal, santé, erreurs, montants) ·
+             apps/users (identité, OTP, sessions, rôles) ·
+             apps/organizations (organisations, membres) ·
+             apps/projects (projets, membres, règles d'accès) · tests
 frontend/    src/ (api, auth, components, pages) · tests unitaires (vitest)
 docs/        cadrage Phase 0 et spécifications
 docker-compose.yml · docker-compose.prod.yml · .env.example
 ```
 
-## 7. Règles non négociables du projet
+## 8. Règles non négociables du projet
 
 1. Aucun secret dans le dépôt : uniquement des variables d'environnement (`.env.example` documenté).
 2. Aucun OTP, mot de passe ou jeton en clair — ni en base, ni dans les logs, ni dans les réponses.

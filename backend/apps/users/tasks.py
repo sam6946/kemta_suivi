@@ -18,9 +18,9 @@ def send_sms_task(self, phone: str, message: str) -> None:
 
     try:
         sms.deliver_sms(phone, message)
-    except Exception as exc:  # noqa: BLE001 - on journalise puis on réessaie
+    except Exception as exc:
         logger.warning("Échec d'envoi SMS (tentative %s)", self.request.retries)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -30,9 +30,9 @@ def send_email_task(self, to: str, subject: str, message: str) -> None:
 
     try:
         email.deliver_email(to, subject, message)
-    except Exception as exc:  # noqa: BLE001 - on journalise puis on réessaie
+    except Exception as exc:
         logger.warning("Échec d'envoi email (tentative %s)", self.request.retries)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task
