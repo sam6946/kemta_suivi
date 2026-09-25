@@ -1,0 +1,86 @@
+# Plan de tests — KEMTA SUIVI (Phase 0)
+
+Objectif : chaque fonctionnalité ne passe « terminée » que si ses tests passent. Un test qui
+n'existe pas équivaut à un critère d'acceptation non mesuré.
+
+## 1. Pyramide
+
+| Niveau | Outil | Couverture attendue |
+|---|---|---|
+| Unitaire (backend) | `pytest` + `pytest-django` | règles métier, services (OTP, normalisation téléphone, calculs financiers, avancement) |
+| API / intégration | `DRF APIClient` + `pytest` | permissions, statuts HTTP, pagination, idempotence, N+1 |
+| Unitaire (frontend) | `Vitest` + `Testing Library` | reducers, file de synchronisation, formatage, états UI |
+| E2E | `Playwright` (Chromium + contexte mobile) | parcours critiques, offline/online |
+| Performance | `pytest-django` `django_assert_num_queries`, `k6`/`Locust` (Phase 11) | N+1, latences |
+| Sécurité | `pip-audit`, tests dédiés, revue | secrets, énumération, rate limiting |
+
+Seuil de couverture backend : **85 %** sur `apps/`, blocage CI en dessous.
+
+## 2. Commandes
+
+```bash
+# backend (depuis backend/)
+pytest                       # tous les tests
+pytest --cov=apps --cov-report=term-missing
+pytest -m "not slow"
+
+# frontend (depuis frontend/)
+npm test                     # vitest
+npm run test:e2e             # playwright (démarre le backend de test)
+
+# tout (docker)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec web pytest
+```
+
+## 3. Matrice de couverture (fonctionnalité → tests exigés)
+
+| ID | Tests exigés |
+|---|---|
+| MVP-001 Inscription | numéro valide CM accepté · format invalide refusé · numéro déjà utilisé (409) · compte inactif avant OTP · pas d'email demandé · aucun secret dans les logs |
+| MVP-002 OTP | expiration · code erroné · réutilisation · `purpose` incompatible · max tentatives · renvoi limité (numéro + IP) · stockage haché |
+| MVP-003 Session | non confirmé refusé · token expiré · refresh rotation · refresh révoqué · logout blacklist · pas de boucle de retry |
+| MVP-004 RBAC | **matrice paramétrée** : chaque permission critique × test positif + test négatif ; projet non autorisé → 404 ; action interdite → 403 |
+| MVP-005 Org/Projets | création · rattachement obligatoire à une organisation · liste filtrée/paginée · changement de rôle journalisé · `assert_num_queries` sur la liste |
+| MVP-006 Jalons/Tâches | création · dates incohérentes refusées · avancement calculé serveur · tâche en retard détectée · clôture · permissions |
+| MVP-007 Preuve | upload valide · fichier invalide (type/taille) · GPS absent (`gps_status=UNAVAILABLE`) · GPS refusé (`DENIED`) · hash enregistré · thumbnail généré |
+| MVP-008 Validation | validateur autorisé · non autorisé (403) · rejet avec commentaire obligatoire · historique append-only · preuve rejetée consultable |
+| MVP-009 Offline | preuve persistée après rechargement (IndexedDB) · reprise après interruption · doublon évité (hash + idempotency) · backoff exponentiel + limite · conflit identifié · retour online déclenche la synchro |
+| MVP-010 Finances | montants entiers FCFA · total calculé serveur (total client ignoré) · `transaction.atomic` + rollback sur erreur · dépassement détecté · concurrence (`select_for_update`) · journalisation ancienne/nouvelle valeur |
+| **MVP-017 Reset mot de passe** | numéro inconnu (réponse neutre, pas d'énumération) · OTP invalide/expiré/réutilisé/autre `purpose` · max tentatives · renvoi limité · mot de passe faible · réutilisation du mot de passe courant · compte non confirmé · compte désactivé · **sessions révoquées après reset** · SMS de confirmation envoyé · journalisation des 5 événements · rate limiting · E2E « Mot de passe oublié ? » → reconnexion |
+| MVP-011 Dashboard | endpoint agrégé · `assert_num_queries` ≤ seuil · cohérence avec les calculs backend · alertes déterministes · collections limitées · états loading/empty/error/offline |
+| MVP-012 Journal | création d'événements pour chaque action sensible · protection contre suppression · accès réservé · pagination |
+| MVP-013 Médias | compression avant/après (taille mesurée) · thumbnail généré · limites taille/type · tâche échouée relançable |
+| MVP-014 Notifications | émission des 5 événements métier · regroupement · permissions de consultation |
+| Outils de développement | `/api/dev/outbox/` disponible en dev, **404** hors développement, aucun secret exposé |
+| MVP-015 Observabilité | `/health/` ok/dégradé (base ou Redis down) · erreurs structurées · **aucun secret ni OTP en clair dans les logs** |
+
+## 4. Données de seed
+
+- Commande `python manage.py seed_dev` : **explicitement identifiée comme données de
+  développement**, refusée si `DJANGO_ENV=production` (sauf `--force`).
+- Contexte camerounais : organisations de Douala/Yaoundé, projets en FCFA (montants réalistes :
+  15 000 000 – 500 000 000 XAF), numéros `+2376XXXXXXXX`, jalons en français, preuves avec GPS
+  autour de Douala.
+- Comptes de démo : un utilisateur **par rôle** (9 rôles), mot de passe de développement
+  documenté dans le README, OTP en mode console en dev.
+- **Aucune donnée mockée dans le parcours produit final** : la seed sert aux tests et aux démos,
+  jamais à simuler une fonctionnalité manquante.
+
+## 5. E2E (MVP-016) — scénarios automatisés
+
+1. inscription avec numéro → 2. validation OTP → 3. connexion → 4. ajout facultatif de l'email →
+5. création d'organisation → 6. création de projet → 7. ajout de membre → 8. création de jalon →
+9. capture de preuve → 10. validation de preuve → 11. création de dépense →
+12. consultation du dashboard → 13. passage offline → 14. synchronisation automatique →
+**15. réinitialisation du mot de passe après oubli**.
+
+Exécution : `npm run test:e2e` dans un environnement documenté (backend de test + base SQLite +
+SMS console). Le scénario 13/14 utilise `context.setOffline(true)` de Playwright, ferme l'onglet,
+le rouvre, repasse en ligne et vérifie la synchronisation sans doublon.
+
+## 6. Règles d'or
+
+- Un test qui échoue de façon intermittente est un bug produit (blocage CI).
+- Toute régression critique corrigée ajoute son test de non-régression.
+- Les tests de permissions sont **générés depuis la matrice** (`docs/rbac-matrix.md`) pour que
+  documentation et code ne puissent pas diverger silencieusement.
