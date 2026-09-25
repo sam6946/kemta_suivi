@@ -61,7 +61,7 @@ cd frontend && npm install && npm run dev
 cd backend && pytest                       # 252 tests, sans infrastructure externe
 cd backend && pytest --cov=apps            # couverture (≈ 94 %)
 cd backend && ruff check . && ruff format --check .    # lint + formatage
-cd frontend && npm test                    # 34 tests : mot de passe oublié, projets, membres, formatage FCFA
+cd frontend && npm run lint && npm test   # lint ESLint + 34 tests : mot de passe oublié, projets, membres, formatage FCFA
 cd frontend && npm run build               # vérification TypeScript + build
 ```
 

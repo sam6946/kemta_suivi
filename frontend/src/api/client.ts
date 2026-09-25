@@ -73,12 +73,16 @@ type RequestOptions = {
   retryOnUnauthorized?: boolean;
 };
 
+type ErrorPayload = {
+  error?: { code?: string; message?: string; details?: Record<string, unknown> };
+};
+
 async function parseError(response: Response): Promise<ApiError> {
-  let payload: any = null;
+  let payload: ErrorPayload | null = null;
   try {
-    payload = await response.json();
+    payload = (await response.json()) as ErrorPayload;
   } catch {
-    payload = null;
+    payload = null; // réponse non JSON (proxy, coupure réseau) : erreur générique
   }
   const error = payload?.error;
   return new ApiError(
