@@ -41,10 +41,13 @@ PROJECT_PERMISSION_KEYS = (
     Capability.EDIT_PROJECT,
     Capability.ARCHIVE_PROJECT,
     Capability.MANAGE_MEMBERS,
+    Capability.MANAGE_SCHEDULE,
+    Capability.UPDATE_TASK,
     Capability.CAPTURE_EVIDENCE,
     Capability.VALIDATE_EVIDENCE,
     Capability.VIEW_FINANCE,
     Capability.MANAGE_FINANCE,
+    Capability.VIEW_ACTIVITY,
 )
 
 

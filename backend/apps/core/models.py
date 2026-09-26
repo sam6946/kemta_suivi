@@ -107,6 +107,14 @@ class ActivityLog(models.Model):
         MEMBER_ADDED = "MEMBER_ADDED", "Membre ajouté"
         MEMBER_ROLE_CHANGED = "MEMBER_ROLE_CHANGED", "Rôle modifié"
         MEMBER_REMOVED = "MEMBER_REMOVED", "Membre retiré"
+        # Phase 4 — planification.
+        MILESTONE_CREATED = "MILESTONE_CREATED", "Jalon créé"
+        MILESTONE_UPDATED = "MILESTONE_UPDATED", "Jalon modifié"
+        MILESTONE_DELETED = "MILESTONE_DELETED", "Jalon supprimé"
+        TASK_CREATED = "TASK_CREATED", "Tâche créée"
+        TASK_UPDATED = "TASK_UPDATED", "Tâche modifiée"
+        TASK_STATUS_CHANGED = "TASK_STATUS_CHANGED", "Statut de tâche modifié"
+        TASK_DELETED = "TASK_DELETED", "Tâche supprimée"
 
     id = models.BigAutoField(primary_key=True)
     actor = models.ForeignKey(

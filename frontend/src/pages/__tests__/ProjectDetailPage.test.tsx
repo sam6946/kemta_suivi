@@ -3,7 +3,7 @@
  * et absence de toute action non autorisée (le frontend masque, le backend décide).
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,10 +66,13 @@ function project(manageMembers: boolean) {
       edit_project: manageMembers,
       archive_project: manageMembers,
       manage_members: manageMembers,
+      manage_schedule: manageMembers,
+      update_task: manageMembers,
       capture_evidence: true,
       validate_evidence: false,
       view_finance: true,
       manage_finance: manageMembers,
+      view_activity: true,
     },
     created_at: "2026-01-01T08:00:00Z",
     updated_at: "2026-01-01T08:00:00Z",
@@ -140,6 +143,96 @@ function mockApi({
       });
     }
     if (url.match(/\/api\/projects\/\d+\/$/)) return jsonResponse(project(manager));
+    if (url.match(/\/api\/projects\/\d+\/schedule\/$/)) {
+      return jsonResponse({
+        project: {
+          id: 12,
+          name: "Résidence Bonamoussadi — tranche 1",
+          status: "ACTIVE",
+          progress: 62.5,
+          planned_start_date: "2026-01-12",
+          planned_end_date: "2026-12-18",
+        },
+        milestones: [
+          {
+            id: 1,
+            project: 12,
+            title: "Fondations et soubassement",
+            description: "",
+            status: "IN_PROGRESS",
+            status_label: "En cours",
+            planned_date: "2026-04-10",
+            actual_date: null,
+            order: 0,
+            weight: "3.00",
+            is_late: true,
+            days_late: 12,
+            progress: 55,
+            task_total: 1,
+            task_done: 0,
+            tasks: [
+              {
+                id: 41,
+                title: "Coulage des semelles",
+                status: "IN_PROGRESS",
+                status_label: "En cours",
+                progress: "40.00",
+                is_late: false,
+                days_late: 0,
+                planned_start_date: "2026-03-01",
+                planned_end_date: "2026-03-20",
+                actual_end_date: null,
+                assignee: { id: 9, first_name: "Bertrand", last_name: "Fotso", phone_masked: "+23769100 •• 04" },
+                depends_on: [],
+              },
+            ],
+            created_at: "",
+            updated_at: "",
+          },
+        ],
+        orphan_tasks: [],
+        summary: {
+          milestones_total: 1,
+          milestones_done: 0,
+          tasks_total: 1,
+          tasks_done: 0,
+          tasks_late: 0,
+          milestones_late: 1,
+          names_late: ["Fondations et soubassement"],
+        },
+        alerts: [
+          { type: "milestone_late", id: 1, title: "Fondations et soubassement", days_late: 12 },
+        ],
+      });
+    }
+    if (url.match(/\/api\/projects\/\d+\/tasks\/\d+\/$/) && init?.method === "PATCH") {
+      return jsonResponse({ id: 41, project: 12, milestone: 1, title: "Coulage des semelles",
+        description: "", status: "DONE", status_label: "Terminée", planned_start_date: "2026-03-01",
+        planned_end_date: "2026-03-20", actual_start_date: null, actual_end_date: "2026-09-25",
+        progress: "100.00", weight: "1.00", assignee: null, depends_on: [], is_late: false,
+        days_late: 0, created_at: "", updated_at: "" });
+    }
+    if (url.match(/\/api\/projects\/\d+\/milestones\/$/) && init?.method === "POST") {
+      return jsonResponse({ id: 2, project: 12, title: "Second œuvre", description: "",
+        status: "PLANNED", status_label: "Planifié", planned_date: null, actual_date: null,
+        order: 1, weight: "1.00", is_late: false, days_late: 0, progress: 0, task_total: 0,
+        task_done: 0, created_at: "", updated_at: "" }, 201);
+    }
+    if (url.startsWith("/api/meta/status/")) {
+      return jsonResponse({
+        project: [{ value: "ACTIVE", label: "En cours" }],
+        milestone: [
+          { value: "PLANNED", label: "Planifié" },
+          { value: "IN_PROGRESS", label: "En cours" },
+          { value: "DONE", label: "Terminé" },
+        ],
+        task: [
+          { value: "TODO", label: "À faire" },
+          { value: "IN_PROGRESS", label: "En cours" },
+          { value: "DONE", label: "Terminée" },
+        ],
+      });
+    }
     if (url.startsWith("/api/meta/roles/")) {
       return jsonResponse({
         results: [
@@ -213,7 +306,8 @@ describe("ProjectDetailPage", () => {
     await user.type(screen.getByLabelText(/numéro de téléphone/i), "+237699000777");
     await user.click(screen.getByRole("button", { name: /ajouter au projet/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/erreur/i);
+    const feedback = await screen.findByTestId("members-feedback");
+    expect(await within(feedback).findByRole("alert")).toHaveTextContent(/erreur/i);
   });
 
   it("masque les actions de gestion pour un rôle non autorisé", async () => {
@@ -226,5 +320,80 @@ describe("ProjectDetailPage", () => {
     expect(screen.queryByRole("button", { name: /retirer/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /archiver le projet/i })).not.toBeInTheDocument();
     expect(screen.getByText(/lecture seule/i)).toBeInTheDocument();
+  });
+
+  it("affiche le planning : jalons, tâches, retards et avancement calculé", async () => {
+    mockApi();
+    sessionStorage.setItem("kemta.access", "token");
+    renderPage();
+
+    await screen.findByText("Résidence Bonamoussadi — tranche 1");
+    const planning = await screen.findByTestId("planning");
+
+    expect(within(planning).getAllByText("Fondations et soubassement").length).toBeGreaterThan(0);
+    expect(within(planning).getByText("Coulage des semelles")).toBeInTheDocument();
+    // L'avancement affiché est celui du serveur (62,5 %), jamais recalculé côté client.
+    expect(
+      within(planning).getByRole("heading", { name: /avancement calculé/i }),
+    ).toHaveTextContent(/62,5/);
+    // L'alerte de retard du jalon est affichée (une seule mention dans le bandeau).
+    expect(within(planning).getAllByText(/12 j/).length).toBeGreaterThan(0);
+  });
+
+  it("permet au responsable désigné de faire avancer une tâche", async () => {
+    const user = userEvent.setup();
+    const { calls } = mockApi();
+    sessionStorage.setItem("kemta.access", "token");
+    renderPage();
+
+    const planning = await screen.findByTestId("planning");
+    await within(planning).findByText("Coulage des semelles");
+    await user.selectOptions(
+      within(planning).getByLabelText("Statut de Coulage des semelles"),
+      "DONE",
+    );
+
+    await waitFor(() => {
+      const patch = calls.find(
+        (call) =>
+          call.url === "/api/tasks/41/" && call.init?.method === "PATCH",
+      );
+      expect(patch).toBeDefined();
+      // La date réelle est exigée par le backend pour une tâche terminée.
+      expect(JSON.parse(String(patch!.init!.body))).toMatchObject({ status: "DONE" });
+      expect(JSON.parse(String(patch!.init!.body)).actual_end_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+  });
+
+  it("n'expose aucune action de planification sans la capacité manage_schedule", async () => {
+    mockApi({ manager: false });
+    sessionStorage.setItem("kemta.access", "token");
+    renderPage();
+
+    const planning = await screen.findByTestId("planning");
+    expect(within(planning).queryByRole("button", { name: /créer le jalon/i })).not.toBeInTheDocument();
+    expect(within(planning).queryByRole("button", { name: /créer la tâche/i })).not.toBeInTheDocument();
+    expect(within(planning).queryByRole("button", { name: /supprimer/i })).not.toBeInTheDocument();
+    expect(within(planning).getByText(/consultation seule/i)).toBeInTheDocument();
+  });
+
+  it("crée un jalon et recharge le planning", async () => {
+    const user = userEvent.setup();
+    const { calls } = mockApi();
+    sessionStorage.setItem("kemta.access", "token");
+    renderPage();
+
+    const planning = await screen.findByTestId("planning");
+    await within(planning).findAllByText("Fondations et soubassement");
+    await user.type(within(planning).getByLabelText("Titre du jalon"), "Second œuvre");
+    await user.click(within(planning).getByRole("button", { name: /créer le jalon/i }));
+
+    await waitFor(() => {
+      const post = calls.find(
+        (call) => call.url === "/api/projects/12/milestones/" && call.init?.method === "POST",
+      );
+      expect(post).toBeDefined();
+      expect(JSON.parse(String(post!.init!.body))).toMatchObject({ title: "Second œuvre", weight: 1 });
+    });
   });
 });

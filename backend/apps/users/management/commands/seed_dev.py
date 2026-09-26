@@ -2,14 +2,18 @@
 
 - Refuse de s'exécuter si `DJANGO_ENV=production` (sauf `--force`).
 - Aucune donnée n'est simulée côté produit : ces comptes servent aux démos et aux tests.
-- Les jalons, preuves et lignes budgétaires seront ajoutés ici aux phases 4 et suivantes.
+- Organisations, projets, membres, jalons et tâches de démonstration.
+- Les preuves terrain et les lignes budgétaires seront ajoutées aux phases 5 et 7.
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 from django.utils.text import slugify as _slugify
 
 from apps.users.models import User
@@ -129,6 +133,280 @@ PROJECTS = [
 ]
 
 
+# Planning de démonstration : offsets en jours par rapport à aujourd'hui (dates cohérentes et
+# retards reproductibles), poids de pondération, responsables désignés par rôle.
+PLANNING = {
+    "RBS-T1": [
+        {
+            "title": "Installation de chantier",
+            "status": "DONE",
+            "planned_offset": -120,
+            "actual_offset": -118,
+            "weight": 1,
+            "tasks": [
+                {
+                    "title": "Clôture et base vie",
+                    "status": "DONE",
+                    "weight": 1,
+                    "start_offset": -120,
+                    "end_offset": -114,
+                    "actual_offset": -113,
+                    "role": "FIELD_AGENT",
+                },
+                {
+                    "title": "Raccordement eau et électricité",
+                    "status": "DONE",
+                    "weight": 1,
+                    "start_offset": -115,
+                    "end_offset": -108,
+                    "actual_offset": -107,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+        {
+            "title": "Fondations et soubassement",
+            "status": "DONE",
+            "planned_offset": -60,
+            "actual_offset": -52,
+            "weight": 2,
+            "tasks": [
+                {
+                    "title": "Terrassement",
+                    "status": "DONE",
+                    "weight": 2,
+                    "start_offset": -100,
+                    "end_offset": -75,
+                    "actual_offset": -74,
+                    "role": "CONTRACTOR",
+                },
+                {
+                    "title": "Semelles et longrines",
+                    "status": "DONE",
+                    "weight": 3,
+                    "start_offset": -74,
+                    "end_offset": -58,
+                    "actual_offset": -52,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+        {
+            "title": "Élévation des niveaux",
+            "status": "IN_PROGRESS",
+            "planned_offset": 45,
+            "weight": 3,
+            "tasks": [
+                {
+                    "title": "Poteaux niveau 1",
+                    "status": "DONE",
+                    "weight": 2,
+                    "start_offset": -50,
+                    "end_offset": -30,
+                    "actual_offset": -29,
+                    "role": "CONTRACTOR",
+                },
+                # Tâche en retard : fin prévue dépassée, statut non terminal.
+                {
+                    "title": "Dalle niveau 2",
+                    "status": "IN_PROGRESS",
+                    "progress": 60,
+                    "weight": 3,
+                    "start_offset": -28,
+                    "end_offset": -5,
+                    "role": "CONTRACTOR",
+                },
+                {
+                    "title": "Maçonnerie niveau 2",
+                    "status": "IN_PROGRESS",
+                    "progress": 20,
+                    "weight": 2,
+                    "start_offset": -10,
+                    "end_offset": 20,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+        {
+            "title": "Second œuvre et réception",
+            "status": "PLANNED",
+            "planned_offset": 150,
+            "weight": 2,
+            "tasks": [
+                {
+                    "title": "Électricité et plomberie",
+                    "status": "TODO",
+                    "weight": 2,
+                    "start_offset": 30,
+                    "end_offset": 90,
+                    "role": "CONTRACTOR",
+                },
+                {
+                    "title": "Visite de réception",
+                    "status": "TODO",
+                    "weight": 1,
+                    "start_offset": 130,
+                    "end_offset": 150,
+                    "role": "VALIDATOR",
+                },
+            ],
+        },
+    ],
+    "AKW-T2": [
+        {
+            "title": "Études d'exécution",
+            "status": "DONE",
+            "planned_offset": -90,
+            "actual_offset": -85,
+            "weight": 1,
+            "tasks": [
+                {
+                    "title": "Plans béton armé",
+                    "status": "DONE",
+                    "weight": 2,
+                    "start_offset": -90,
+                    "end_offset": -70,
+                    "actual_offset": -68,
+                    "role": "ENGINEER",
+                },
+            ],
+        },
+        {
+            "title": "Gros œuvre",
+            "status": "IN_PROGRESS",
+            "planned_offset": 60,
+            "weight": 4,
+            "tasks": [
+                {
+                    "title": "Fondations spéciales",
+                    "status": "DONE",
+                    "weight": 3,
+                    "start_offset": -65,
+                    "end_offset": -35,
+                    "actual_offset": -33,
+                    "role": "CONTRACTOR",
+                },
+                {
+                    "title": "Structure niveau 1",
+                    "status": "IN_PROGRESS",
+                    "progress": 45,
+                    "weight": 3,
+                    "start_offset": -30,
+                    "end_offset": 25,
+                    "role": "CONTRACTOR",
+                },
+                {
+                    "title": "Essais béton 28 jours",
+                    "status": "TODO",
+                    "weight": 1,
+                    "start_offset": 5,
+                    "end_offset": 40,
+                    "role": "ENGINEER",
+                    "depends_on": ["Structure niveau 1"],
+                },
+            ],
+        },
+        {
+            "title": "Clos et couvert",
+            "status": "PLANNED",
+            "planned_offset": 210,
+            "weight": 2,
+            "tasks": [
+                {
+                    "title": "Charpente et couverture",
+                    "status": "TODO",
+                    "weight": 2,
+                    "start_offset": 80,
+                    "end_offset": 140,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+    ],
+    "VCK-01": [
+        {
+            "title": "Ouverture de la plateforme",
+            "status": "DONE",
+            "planned_offset": -150,
+            "actual_offset": -140,
+            "weight": 2,
+            "tasks": [
+                {
+                    "title": "Débroussaillage",
+                    "status": "DONE",
+                    "weight": 2,
+                    "start_offset": -150,
+                    "end_offset": -120,
+                    "actual_offset": -118,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+        {
+            # Jalon en retard : date prévue dépassée, statut non terminal.
+            "title": "Terrassement général",
+            "status": "IN_PROGRESS",
+            "planned_offset": -12,
+            "weight": 3,
+            "tasks": [
+                {
+                    "title": "Décapage PK0 à PK2",
+                    "status": "DONE",
+                    "weight": 2,
+                    "start_offset": -110,
+                    "end_offset": -80,
+                    "actual_offset": -78,
+                    "role": "CONTRACTOR",
+                },
+                {
+                    "title": "Remblais PK2 à PK5",
+                    "status": "IN_PROGRESS",
+                    "progress": 35,
+                    "weight": 3,
+                    "start_offset": -70,
+                    "end_offset": 30,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+        {
+            "title": "Couche de fondation",
+            "status": "PLANNED",
+            "planned_offset": 120,
+            "weight": 2,
+            "tasks": [
+                {
+                    "title": "Grave non traitée",
+                    "status": "TODO",
+                    "weight": 2,
+                    "start_offset": 35,
+                    "end_offset": 100,
+                    "role": "CONTRACTOR",
+                },
+            ],
+        },
+    ],
+    "REC-NKB": [
+        {
+            "title": "Réception du chantier",
+            "status": "PLANNED",
+            "planned_offset": 25,
+            "weight": 1,
+            "tasks": [
+                {
+                    "title": "Relevé de l'état des lieux",
+                    "status": "TODO",
+                    "weight": 1,
+                    "start_offset": 5,
+                    "end_offset": 15,
+                    "role": "ENGINEER",
+                },
+            ],
+        },
+    ],
+}
+
+
 class Command(BaseCommand):
     help = "Crée les comptes de démonstration (données de développement uniquement)."
 
@@ -184,10 +462,10 @@ class Command(BaseCommand):
             )
         )
         if not options["skip_projects"]:
-            organizations, projects, memberships = self._seed_projects()
+            organizations, projects, memberships, milestones, tasks = self._seed_projects()
             self.stdout.write(
                 f"{organizations} organisation(s), {projects} projet(s), "
-                f"{memberships} appartenance(s) créés."
+                f"{memberships} appartenance(s), {milestones} jalon(s), {tasks} tâche(s) créés."
             )
 
         if ALL_ROLES:
@@ -201,7 +479,87 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
     # Organisations, projets et membres de démonstration (phase 3)
     # ------------------------------------------------------------------
-    def _seed_projects(self) -> tuple[int, int, int]:
+    @staticmethod
+    def _day(offset):
+        """Date relative à aujourd'hui : les retards de démonstration restent stables."""
+        if offset is None:
+            return None
+        return timezone.localdate() + timedelta(days=offset)
+
+    @transaction.atomic
+    def _seed_planning(self, projects_by_code: dict) -> tuple[int, int]:
+        """Jalons et tâches de démonstration, idempotents (clé : projet + titre)."""
+        from decimal import Decimal
+
+        from apps.projects.models import Milestone, ProjectMember, Task
+        from apps.projects.progress import recalculate_project_progress
+
+        users_by_role = {user.role: user for user in User.objects.all()}
+        created_milestones = 0
+        created_tasks = 0
+
+        for code, milestones in PLANNING.items():
+            project = projects_by_code.get(code)
+            if project is None:
+                continue
+            tasks_by_title: dict[str, object] = {}
+            for index, spec in enumerate(milestones):
+                milestone, created = Milestone.objects.get_or_create(
+                    project=project,
+                    title=spec["title"],
+                    defaults={
+                        "status": spec["status"],
+                        "planned_date": self._day(spec.get("planned_offset")),
+                        "actual_date": self._day(spec.get("actual_offset")),
+                        "order": index,
+                        "weight": Decimal(str(spec.get("weight", 1))),
+                        "created_by": project.created_by,
+                    },
+                )
+                created_milestones += int(created)
+
+                for task_spec in spec["tasks"]:
+                    assignee = users_by_role.get(task_spec.get("role", ""))
+                    # Seuls les membres actifs du projet peuvent être responsables.
+                    if (
+                        assignee is not None
+                        and not ProjectMember.objects.filter(
+                            project=project, user=assignee, is_active=True
+                        ).exists()
+                    ):
+                        assignee = None
+                    task, task_created = Task.objects.get_or_create(
+                        project=project,
+                        title=task_spec["title"],
+                        defaults={
+                            "milestone": milestone,
+                            "status": task_spec["status"],
+                            "planned_start_date": self._day(task_spec.get("start_offset")),
+                            "planned_end_date": self._day(task_spec.get("end_offset")),
+                            "actual_end_date": self._day(task_spec.get("actual_offset")),
+                            "progress": Decimal(str(task_spec.get("progress", 0))),
+                            "weight": Decimal(str(task_spec.get("weight", 1))),
+                            "assignee": assignee,
+                            "created_by": project.created_by,
+                        },
+                    )
+                    created_tasks += int(task_created)
+                    tasks_by_title[task_spec["title"]] = task
+
+            # Dépendances posées après création (M2M), sans cycle.
+            for spec in milestones:
+                for task_spec in spec["tasks"]:
+                    task = tasks_by_title.get(task_spec["title"])
+                    for dependency_title in task_spec.get("depends_on", []):
+                        dependency = tasks_by_title.get(dependency_title)
+                        if task is not None and dependency is not None:
+                            task.depends_on.add(dependency)
+
+            recalculate_project_progress(project)
+
+        return created_milestones, created_tasks
+
+    def _seed_projects(self) -> tuple[int, int, int, int, int]:
         from apps.organizations.models import Organization, OrganizationMember
         from apps.projects.models import Project, ProjectMember
 
@@ -233,6 +591,7 @@ class Command(BaseCommand):
 
         created_projects = 0
         created_memberships = 0
+        projects_by_code: dict = {}
         for spec in PROJECTS:
             organization = organizations[spec["organization"]]
             creator = user_for("PROJECT_OWNER") or organization.owner
@@ -254,6 +613,7 @@ class Command(BaseCommand):
                 },
             )
             created_projects += int(created)
+            projects_by_code[spec["code"]] = project
 
             for role, flags in spec["members"].items():
                 member_user = user_for(role)
@@ -266,4 +626,12 @@ class Command(BaseCommand):
                 )
                 created_memberships += int(membership_created)
 
-        return created_organizations, created_projects, created_memberships
+        created_milestones, created_tasks = self._seed_planning(projects_by_code)
+
+        return (
+            created_organizations,
+            created_projects,
+            created_memberships,
+            created_milestones,
+            created_tasks,
+        )

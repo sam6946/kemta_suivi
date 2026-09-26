@@ -90,6 +90,9 @@ modification est journalisée (`MEMBER_ROLE_CHANGED`).
   visible mais l'action interdite, conformément aux critères d'acceptation de MVP-005.
 - Constantes centralisées dans `apps/users/roles.py` : une seule source de vérité, partagée avec
   le frontend via `GET /api/meta/roles/`.
+- Capacités de planification (Phase 4) : `MANAGE_SCHEDULE` (créer/planifier jalons et tâches)
+  et `UPDATE_TASK` (mettre à jour l'exécution d'une tâche dont on est responsable). Un
+  `CONTRACTOR` porte `UPDATE_TASK` sans `MANAGE_SCHEDULE` : il exécute, il ne replanifie pas.
 - Résolution des capacités projets dans `apps/projects/access.py` : `resolve_capabilities()` pour
   un projet, `build_capabilities_map()` pour une collection (une passe, pas de N+1), et
   `permissions_payload()` pour le champ `permissions` de l'API.

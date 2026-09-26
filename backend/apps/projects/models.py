@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.core.models import SoftDeleteModel, TimeStampedModel
 from apps.users.roles import ROLE_CHOICES
@@ -181,3 +183,265 @@ class ProjectMember(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.user} @ {self.project} ({self.role})"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — jalons et tâches
+# ---------------------------------------------------------------------------
+class MilestoneStatus(models.TextChoices):
+    PLANNED = "PLANNED", "Planifié"
+    IN_PROGRESS = "IN_PROGRESS", "En cours"
+    DONE = "DONE", "Terminé"
+    BLOCKED = "BLOCKED", "Bloqué"
+    CANCELLED = "CANCELLED", "Annulé"
+
+
+class TaskStatus(models.TextChoices):
+    TODO = "TODO", "À faire"
+    IN_PROGRESS = "IN_PROGRESS", "En cours"
+    DONE = "DONE", "Terminée"
+    BLOCKED = "BLOCKED", "Bloquée"
+    CANCELLED = "CANCELLED", "Annulée"
+
+
+def _as_date(value):
+    """Normalise une date potentiellement encore au format `str` (instance non rechargée)."""
+    if value is None or (isinstance(value, date) and not isinstance(value, datetime)):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+# Statuts terminaux : ni retard possible, ni date réelle à saisir avant.
+FINAL_STATUSES = frozenset({MilestoneStatus.DONE, MilestoneStatus.CANCELLED})
+FINAL_TASK_STATUSES = frozenset({TaskStatus.DONE, TaskStatus.CANCELLED})
+# Statuts « ouverts » : une tâche qui n'est ni terminée ni annulée peut être en retard.
+OPEN_TASK_STATUSES = tuple(
+    status for status in TaskStatus.values if status not in FINAL_TASK_STATUSES
+)
+
+
+def _validate_progress(value, *, field: str, errors: dict[str, str]) -> Decimal | None:
+    """Avancement : pourcentage entre 0 et 100, arrondi à deux décimales.
+
+    Les valeurs décimales sont acceptées (12,5 % est un avancement légitime) mais
+    bornées : ni négatif, ni au-delà de 100 %.
+    """
+    if value is None:
+        return None
+    try:
+        progress = Decimal(str(value)).quantize(Decimal("0.01"))
+    except (ArithmeticError, ValueError):
+        errors[field] = "Avancement invalide."
+        return None
+    if progress < 0 or progress > 100:
+        errors[field] = "L'avancement doit être compris entre 0 et 100."
+        return None
+    return progress
+
+
+def _validate_dates(
+    start, end, *, start_field: str, end_field: str, errors: dict[str, str]
+) -> None:
+    if start and end and start > end:
+        errors[end_field] = "La fin doit suivre le début."
+
+
+class Milestone(TimeStampedModel, SoftDeleteModel):
+    """Jalon du projet : étape datée qui porte la pondération de l'avancement."""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="milestones")
+    title = models.CharField("titre", max_length=180)
+    description = models.TextField("description", blank=True)
+    status = models.CharField(
+        "statut", max_length=16, choices=MilestoneStatus.choices, default=MilestoneStatus.PLANNED
+    )
+    planned_date = models.DateField("date prévue", null=True, blank=True)
+    actual_date = models.DateField("date réelle", null=True, blank=True)
+    order = models.PositiveIntegerField("ordre", default=0)
+    # Pondération dans le calcul d'avancement du projet (1 = poids neutre).
+    weight = models.DecimalField("poids", max_digits=6, decimal_places=2, default=Decimal("1"))
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="créé par",
+        on_delete=models.PROTECT,
+        related_name="created_milestones",
+    )
+
+    class Meta:
+        verbose_name = "jalon"
+        verbose_name_plural = "jalons"
+        ordering = ["order", "planned_date", "created_at"]
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "deleted_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.get_status_display()})"
+
+    # -- Validation métier --------------------------------------------------
+    def clean(self) -> None:
+        errors: dict[str, str] = {}
+        try:
+            weight = Decimal(str(self.weight))
+        except (ArithmeticError, ValueError):
+            errors["weight"] = "Poids invalide."
+        else:
+            self.weight = weight
+            if weight <= 0:
+                errors["weight"] = "Le poids doit être strictement positif."
+        if self.actual_date and self.status not in FINAL_STATUSES:
+            errors["actual_date"] = "La date réelle suppose un jalon terminé ou annulé."
+        if self.status == MilestoneStatus.DONE and not self.actual_date:
+            errors["actual_date"] = "Renseignez la date réelle d'un jalon terminé."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        return super().save(*args, **kwargs)
+
+    # -- Lecture ------------------------------------------------------------
+    @property
+    def is_late(self) -> bool:
+        """Jalon en retard : date prévue dépassée et jalon non terminal."""
+        planned = _as_date(self.planned_date)
+        return bool(
+            planned and self.status not in FINAL_STATUSES and planned < timezone.localdate()
+        )
+
+    @property
+    def days_late(self) -> int:
+        planned = _as_date(self.planned_date)
+        if not self.is_late or planned is None:
+            return 0
+        return (timezone.localdate() - planned).days
+
+
+class Task(TimeStampedModel, SoftDeleteModel):
+    """Tâche de chantier, éventuellement rattachée à un jalon et à un responsable."""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks")
+    milestone = models.ForeignKey(
+        Milestone,
+        verbose_name="jalon",
+        on_delete=models.SET_NULL,
+        related_name="tasks",
+        null=True,
+        blank=True,
+    )
+    title = models.CharField("titre", max_length=180)
+    description = models.TextField("description", blank=True)
+    status = models.CharField(
+        "statut", max_length=16, choices=TaskStatus.choices, default=TaskStatus.TODO
+    )
+    planned_start_date = models.DateField("début prévu", null=True, blank=True)
+    planned_end_date = models.DateField("fin prévue", null=True, blank=True)
+    actual_start_date = models.DateField("début réel", null=True, blank=True)
+    actual_end_date = models.DateField("fin réelle", null=True, blank=True)
+    progress = models.DecimalField(
+        "avancement (%)", max_digits=5, decimal_places=2, default=Decimal("0")
+    )
+    weight = models.DecimalField("poids", max_digits=6, decimal_places=2, default=Decimal("1"))
+    assignee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="responsable",
+        on_delete=models.SET_NULL,
+        related_name="assigned_tasks",
+        null=True,
+        blank=True,
+    )
+    depends_on = models.ManyToManyField(
+        "self", verbose_name="dépend de", symmetrical=False, related_name="blocking", blank=True
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="créé par",
+        on_delete=models.PROTECT,
+        related_name="created_tasks",
+    )
+
+    class Meta:
+        verbose_name = "tâche"
+        verbose_name_plural = "tâches"
+        ordering = ["planned_start_date", "created_at"]
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "deleted_at"]),
+            models.Index(fields=["assignee", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.get_status_display()})"
+
+    # -- Validation métier --------------------------------------------------
+    def clean(self) -> None:
+        errors: dict[str, str] = {}
+        _validate_dates(
+            self.planned_start_date,
+            self.planned_end_date,
+            start_field="planned_start_date",
+            end_field="planned_end_date",
+            errors=errors,
+        )
+        _validate_dates(
+            self.actual_start_date,
+            self.actual_end_date,
+            start_field="actual_start_date",
+            end_field="actual_end_date",
+            errors=errors,
+        )
+        normalized_progress = _validate_progress(self.progress, field="progress", errors=errors)
+        if normalized_progress is not None:
+            self.progress = normalized_progress
+        try:
+            weight = Decimal(str(self.weight))
+        except (ArithmeticError, ValueError):
+            errors["weight"] = "Poids invalide."
+        else:
+            self.weight = weight
+            if weight <= 0:
+                errors["weight"] = "Le poids doit être strictement positif."
+
+        # Cohérence statut / dates réelles / avancement (règles du data-model).
+        if self.status == TaskStatus.DONE:
+            if not self.actual_end_date:
+                errors["actual_end_date"] = "Renseignez la fin réelle d'une tâche terminée."
+            self.progress = Decimal("100")
+        elif self.actual_end_date:
+            errors["actual_end_date"] = "Retirez la fin réelle ou terminez la tâche."
+        if self.status == TaskStatus.TODO and self.actual_start_date:
+            errors["actual_start_date"] = "Une tâche « à faire » ne peut pas avoir de début réel."
+        if self.status in FINAL_TASK_STATUSES and self.progress != Decimal("100"):
+            self.progress = Decimal("0") if self.status == TaskStatus.CANCELLED else self.progress
+        if self.milestone is not None and self.milestone.project_id != self.project_id:
+            errors["milestone"] = "Le jalon doit appartenir au même projet."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.progress is not None:
+            self.progress = Decimal(str(self.progress))
+        self.clean()
+        return super().save(*args, **kwargs)
+
+    # -- Lecture ------------------------------------------------------------
+    @property
+    def is_late(self) -> bool:
+        """Tâche en retard : fin prévue dépassée et tâche non terminale."""
+        planned = _as_date(self.planned_end_date)
+        return bool(
+            planned and self.status not in FINAL_TASK_STATUSES and planned < timezone.localdate()
+        )
+
+    @property
+    def days_late(self) -> int:
+        planned = _as_date(self.planned_end_date)
+        if not self.is_late or planned is None:
+            return 0
+        return (timezone.localdate() - planned).days

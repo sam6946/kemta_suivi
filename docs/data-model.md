@@ -107,20 +107,27 @@ Contrainte : `unique(project, user)`.
 
 ### `Milestone`
 `project` · `title` · `description` · `status` (`PLANNED` / `IN_PROGRESS` / `DONE` / `BLOCKED` /
-`CANCELLED`) · `planned_date` · `actual_date` · `order` · `weight` (pondération de l'avancement).
+`CANCELLED`) · `planned_date` · `actual_date` · `order` · `weight` (pondération de l'avancement) ·
+`created_by` · suppression logique (`deleted_at`).
 
 ### `Task`
 `project` · `milestone` (FK nullable) · `title` · `description` · `status` (`TODO` / `IN_PROGRESS` /
 `DONE` / `BLOCKED` / `CANCELLED`) · `planned_start_date` · `planned_end_date` · `actual_start_date` ·
 `actual_end_date` · `progress` (0-100) · `weight` · `assignee` (FK `User` nullable) ·
-`depends_on` (M2M vers `Task`, sans cycle).
+`depends_on` (M2M vers `Task`, sans cycle) · `created_by` · suppression logique (`deleted_at`).
 
-**Règles serveur**
-- `planned_start_date <= planned_end_date`, sinon `400 dates_inconsistent`.
-- `actual_date` interdite si le statut n'est pas terminal, et inversement.
-- Avancement du projet = moyenne pondérée des jalons (poids `weight`), recalculée côté serveur
-  (signal + tâche Celery), jamais acceptée depuis le client.
+Implémentation : `apps/projects/models.py`, calcul dans `apps/projects/progress.py`.
+
+**Règles serveur** (détaillées dans `docs/flows/planning.md`)
+- `planned_start_date <= planned_end_date`, sinon `400` avec le champ `planned_end_date`.
+- `actual_date` / `actual_end_date` interdites si le statut n'est pas terminal, et obligatoires
+  pour `DONE`.
+- `progress` borné 0-100 (deux décimales), `weight` strictement positif.
+- Avancement du projet = moyenne pondérée des jalons non annulés (poids `weight`) + un groupe
+  « tâches sans jalon » ; recalculé après chaque écriture de jalon ou de tâche et persisté,
+  jamais accepté depuis le client.
 - Tâche en retard = `planned_end_date < aujourd'hui` **et** `status != DONE/CANCELLED`.
+- Les dépendances (`depends_on`) sont un graphe acyclique interne au projet (`409` sinon).
 
 ---
 

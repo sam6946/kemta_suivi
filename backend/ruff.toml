@@ -23,6 +23,11 @@ ignore = [
     "RUF012",
     # La longueur des lignes est garantie par `ruff format`, pas par le linter.
     "E501",
+    # Caractères ambigus : le code et les commentaires sont en français, qui utilise
+    # légitimement « × », « — » ou « ’ » (typographie, pas homoglyphes de code).
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 
 [lint.per-file-ignores]

@@ -10,10 +10,15 @@ export type ProjectPermissions = {
   edit_project: boolean;
   archive_project: boolean;
   manage_members: boolean;
+  /** Planifier : créer/modifier jalons et tâches (Phase 4). */
+  manage_schedule: boolean;
+  /** Faire avancer une tâche dont on est le responsable désigné (Phase 4). */
+  update_task: boolean;
   capture_evidence: boolean;
   validate_evidence: boolean;
   view_finance: boolean;
   manage_finance: boolean;
+  view_activity: boolean;
 };
 
 export type Project = {

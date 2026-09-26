@@ -1,8 +1,9 @@
 # État d'avancement — MVP KEMTA SUIVI
 
-Dernière mise à jour : phases 0, 1, 2 et 3 livrées.
-Preuves d'exécution : `cd backend && pytest` → **248 tests**, couverture **93 %** ;
-`cd frontend && npm test` → **34 tests** ; `npm run build` → OK.
+Dernière mise à jour : phases 0, 1, 2, 3 et 4 livrées.
+Preuves d'exécution : `cd backend && pytest` → **300 tests**, couverture **94 %** ;
+`cd frontend && npm test` → **38 tests** ; `npm run build` → OK ;
+`ruff check` + `ruff format --check` → propres ; `npm run lint` → propre.
 
 ## Vue par phase
 
@@ -12,7 +13,7 @@ Preuves d'exécution : `cd backend && pytest` → **248 tests**, couverture **93
 | 1 — Fondations | Docker Compose, PostgreSQL/Redis/Celery, `/api/health/`, logs JSON, `.env.example`, migrations, tests, README | ✅ livrée |
 | 2 — Authentification et RBAC | téléphone + OTP, connexion JWT, refresh, RBAC 9 rôles, **réinitialisation du mot de passe**, rate limiting, journalisation | ✅ livrée |
 | 3 — Organisations, projets, membres | organisations, projets, membres, rôles par projet, permissions backend, écrans responsive, tests de permissions | ✅ livrée |
-| 4 — Jalons, tâches, planning | jalons, tâches, Gantt simplifié, avancement serveur, alertes de retard | ⏳ à venir |
+| 4 — Jalons, tâches, planning | jalons, tâches, planning listé, avancement serveur, alertes de retard | ✅ livrée |
 | 5 — Preuves terrain | capture, compression, GPS, hash, statuts, validations | ⏳ à venir |
 | 6 — Offline-first | IndexedDB, file de synchronisation, idempotence, conflits | ⏳ à venir |
 | 7 — Budget, dépenses | budget, postes, dépenses, paiements, transactions atomiques | ⏳ à venir |
@@ -30,7 +31,7 @@ Preuves d'exécution : `cd backend && pytest` → **248 tests**, couverture **93
 | MVP-003 | Connexion et sessions | ✅ | `test_login.py` (rotation, révocation, verrouillage) |
 | MVP-004 | RBAC et permissions backend | ✅ | `test_role_matrix.py`, `apps/projects/tests/test_access_matrix.py` |
 | MVP-005 | Organisations, projets, membres | ✅ | `test_organizations.py`, `test_projects.py`, `test_members.py` |
-| MVP-006 | Jalons, tâches, avancement | ⏳ phase 4 | `Project.progress` déjà calculé côté serveur (lecture seule) |
+| MVP-006 | Jalons, tâches, avancement | ✅ | `test_milestones.py` (14) · `test_tasks.py` (17) · `test_progress.py` (18) |
 | MVP-007 | Capture de preuve terrain | ⏳ phase 5 | — |
 | MVP-008 | Validation et historique des preuves | ⏳ phase 5 | — |
 | MVP-009 | File offline et synchronisation | ⏳ phase 6 | — |
@@ -49,7 +50,8 @@ Preuves d'exécution : `cd backend && pytest` → **248 tests**, couverture **93
 `USER_REGISTERED`, `OTP_SENT/VERIFIED/FAILED/RESEND`, `LOGIN_SUCCESS/FAILED`, `ACCOUNT_LOCKED`,
 `LOGOUT`, `PASSWORD_RESET_REQUESTED/FAILED/CONFIRMED/DENIED`, `PASSWORD_CHANGED`,
 `EMAIL_ADDED/VERIFIED`, `ORG_CREATED/UPDATED`, `PROJECT_CREATED/UPDATED/ARCHIVED`,
-`MEMBER_ADDED/ROLE_CHANGED/REMOVED`.
+`MEMBER_ADDED/ROLE_CHANGED/REMOVED`, `MILESTONE_CREATED/UPDATED/DELETED`,
+`TASK_CREATED/UPDATED/STATUS_CHANGED/DELETED`.
 
 ## Points ouverts (ADR)
 
@@ -60,3 +62,5 @@ Preuves d'exécution : `cd backend && pytest` → **248 tests**, couverture **93
 | ADR-006 | Stockage média : volume chiffré vs S3-compatible | avant phase 5 |
 | ADR-007 | Procédure « numéro perdu / changement de SIM » | avant mise en production |
 | ADR-008 | Invitations par SMS (`ProjectInvitation`) | phase ultérieure |
+| ADR-009 | Gantt graphique (barres temporelles) vs planning listé | retour utilisateur avant phase 8 |
+| ADR-010 | Calendrier ouvré pour le calcul des retards (jours fériés camerounais) | avant mise en production |

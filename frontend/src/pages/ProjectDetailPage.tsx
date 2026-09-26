@@ -8,6 +8,7 @@ import { projectsApi, type Project, type ProjectMember } from "../api/projects";
 import { fetchRoles, type RoleMeta } from "../api/roles";
 import { messageForErrorCode } from "../auth/passwordPolicy";
 import { Alert, Button, Field } from "../components/ui";
+import ProjectPlanning from "./ProjectPlanning";
 import { formatDate, formatFcfa, formatPercent } from "../lib/format";
 
 export default function ProjectDetailPage() {
@@ -141,8 +142,8 @@ export default function ProjectDetailPage() {
           </div>
         </div>
         <p className="field-hint" style={{ marginTop: 12 }}>
-          Les dépenses, preuves et jalons arriveront aux phases 4 à 7 : aucun indicateur n'est
-          simulé ici.
+          Les preuves terrain (phase 5), le budget détaillé (phase 7) et le dashboard agrégé
+          (phase 8) arrivent ensuite : aucun indicateur n'est simulé ici.
         </p>
         {project.permissions.archive_project ? (
           <Button variant="ghost" onClick={archive}>
@@ -151,10 +152,14 @@ export default function ProjectDetailPage() {
         ) : null}
       </section>
 
+      <ProjectPlanning project={project} members={members} onChanged={load} />
+
       <section className="card">
         <h2 style={{ fontSize: "1rem", marginTop: 0 }}>Membres ({members.length})</h2>
-        {error ? <Alert tone="error">{error}</Alert> : null}
-        {feedback ? <Alert tone="success">{feedback}</Alert> : null}
+        <div data-testid="members-feedback">
+          {error ? <Alert tone="error">{error}</Alert> : null}
+          {feedback ? <Alert tone="success">{feedback}</Alert> : null}
+        </div>
 
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 10 }}>
           {members.map((member) => (

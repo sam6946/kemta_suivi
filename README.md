@@ -5,9 +5,10 @@ Suivi de chantier (Cameroun) : preuves terrain **offline-first**, jalons et plan
 React/TypeScript/Vite.
 
 **Avancement actuel : phases 0 (cadrage), 1 (fondations), 2 (authentification, RBAC et
-réinitialisation du mot de passe) et 3 (organisations, projets, membres) livrées et testées.**
-Suite : jalons et tâches (phase 4), preuves terrain (phase 5), offline (phase 6), finances
-(phase 7), dashboard agrégé (phase 8). Détail : [`docs/STATUS.md`](docs/STATUS.md).
+réinitialisation du mot de passe), 3 (organisations, projets, membres) et 4 (jalons, tâches,
+planning) livrées et testées.**
+Suite : preuves terrain (phase 5), offline (phase 6), finances (phase 7), dashboard agrégé
+(phase 8). Détail : [`docs/STATUS.md`](docs/STATUS.md).
 
 ## 1. Démarrage rapide avec Docker (chemin nominal)
 
@@ -58,10 +59,10 @@ cd frontend && npm install && npm run dev
 ## 3. Tests
 
 ```bash
-cd backend && pytest                       # 252 tests, sans infrastructure externe
-cd backend && pytest --cov=apps            # couverture (≈ 94 %)
+cd backend && pytest                       # 300 tests, sans infrastructure externe
+cd backend && pytest --cov=apps            # couverture (94 %)
 cd backend && ruff check . && ruff format --check .    # lint + formatage
-cd frontend && npm run lint && npm test   # lint ESLint + 34 tests : mot de passe oublié, projets, membres, formatage FCFA
+cd frontend && npm run lint && npm test   # lint ESLint + 38 tests : mot de passe oublié, projets, membres, formatage FCFA
 cd frontend && npm run build               # vérification TypeScript + build
 ```
 
@@ -100,7 +101,22 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - Écrans : `/organisations` (liste + création) et `/projets` (liste, filtres, création),
   `/projets/:id` (détail + gestion des membres).
 
-## 6. Documentation
+## 6. Périmètre planification (Phase 4)
+
+- **Jalons** : étape datée avec statut, date prévue/réelle, ordre et **poids** (pondération de
+  l'avancement) ; suppression logique.
+- **Tâches** : rattachables à un jalon, avec dates prévues/réelles, avancement, poids,
+  responsable désigné et **dépendances sans cycle** (une boucle est refusée en 409).
+- **Avancement calculé côté serveur** : moyenne pondérée des jalons (et des tâches sans jalon),
+  recalculée à chaque écriture ; `progress` est en lecture seule dans l'API.
+- **Retards déterministes** : une tâche ou un jalon non terminal dont la date prévue est
+  dépassée, avec le nombre de jours — exposés par `/api/projects/{id}/delays/` et un résumé
+  d'alertes dans `/api/projects/{id}/schedule/`.
+- **Permissions** : `manage_schedule` pour planifier, `update_task` pour qu'un responsable
+  fasse avancer sa tâche (le rôle CONTRACTOR exécute sans replanifier).
+- Écran : `/projets/{id}` — planning ordonné, jalons, tâches, alertes et avancements.
+
+## 7. Documentation
 
 | Document | Contenu |
 |---|---|
@@ -113,9 +129,10 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 | [`docs/test-plan.md`](docs/test-plan.md) | Plan de tests, matrice fonctionnalité → tests, seed, E2E |
 | [`docs/flows/authentication.md`](docs/flows/authentication.md) | Flux inscription / OTP / connexion / **réinitialisation du mot de passe** |
 | [`docs/flows/project.md`](docs/flows/project.md) | Flux organisation → projet → membres, règles d'accès 403/404, performance |
+| [`docs/flows/planning.md`](docs/flows/planning.md) | Flux jalons/tâches, règles de calcul d'avancement et de retard, permissions |
 | [`docs/STATUS.md`](docs/STATUS.md) | État d'avancement phase par phase et fonctionnalité par fonctionnalité |
 
-## 7. Structure du dépôt
+## 8. Structure du dépôt
 
 ```
 backend/     config/ (settings, urls, celery) · apps/core (journal, santé, erreurs, montants) ·
@@ -127,7 +144,7 @@ docs/        cadrage Phase 0 et spécifications
 docker-compose.yml · docker-compose.prod.yml · .env.example
 ```
 
-## 8. Règles non négociables du projet
+## 9. Règles non négociables du projet
 
 1. Aucun secret dans le dépôt : uniquement des variables d'environnement (`.env.example` documenté).
 2. Aucun OTP, mot de passe ou jeton en clair — ni en base, ni dans les logs, ni dans les réponses.

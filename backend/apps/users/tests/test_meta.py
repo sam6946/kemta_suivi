@@ -53,3 +53,31 @@ def test_email_can_be_added_later_with_otp(active_user, api, phone, password, la
     assert active_user.email == "arnaud@example.cm"
     assert active_user.email_verified_at is not None
     assert ActivityLog.objects.filter(action="EMAIL_VERIFIED").exists()
+
+
+@pytest.mark.django_db
+def test_status_meta_lists_official_statuses(auth_client, project_context):
+    """`/api/meta/status/` alimente les listes déroulantes du frontend."""
+    response = auth_client(project_context["owner"]).get("/api/meta/status/")
+
+    assert response.status_code == 200
+    assert [item["value"] for item in response.data["milestone"]] == [
+        "PLANNED",
+        "IN_PROGRESS",
+        "DONE",
+        "BLOCKED",
+        "CANCELLED",
+    ]
+    assert [item["value"] for item in response.data["task"]] == [
+        "TODO",
+        "IN_PROGRESS",
+        "DONE",
+        "BLOCKED",
+        "CANCELLED",
+    ]
+    assert response.data["milestone"][2]["label"] == "Terminé"
+    assert {"value": "ON_HOLD", "label": "Suspendu"} in response.data["project"]
+
+
+def test_status_meta_requires_authentication(api):
+    assert api.get("/api/meta/status/").status_code == 401

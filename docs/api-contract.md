@@ -159,11 +159,54 @@ projet visible mais action interdite → `403`. Voir `docs/flows/project.md` §3
 
 ## 5. Jalons et tâches (Phase 4 — MVP-006)
 
-`GET`/`POST` `/api/projects/{id}/milestones/` · `GET`/`PATCH`/`DELETE`
-`/api/milestones/{id}/` · `GET`/`POST` `/api/projects/{id}/tasks/` · `GET`/`PATCH`/`DELETE`
-`/api/tasks/{id}/` · `GET` `/api/projects/{id}/schedule/` (vue planning : jalons + tâches
-ordonnés, une seule requête aggrégée) · `GET` `/api/projects/{id}/delays/` (tâches/jalons en
-retard, règle déterministe).
+| Méthode | Endpoint | Notes |
+|---|---|---|
+| `GET`/`POST` | `/api/projects/{id}/milestones/` | liste ordonnée (`order`, `planned_date`) ; création → `201` |
+| `GET`/`PATCH`/`DELETE` | `/api/milestones/{id}/` | `DELETE` = suppression logique → `204` |
+| `GET`/`POST` | `/api/projects/{id}/tasks/` | filtres `?status=&milestone=&assignee=&late=1`, tri `?ordering=` (liste blanche) |
+| `GET`/`PATCH`/`DELETE` | `/api/tasks/{id}/` | `PATCH` partiel ; un responsable désigné peut modifier l'exécution |
+| `GET` | `/api/projects/{id}/schedule/` | vue planning agrégée : projet, jalons, tâches sans jalon, résumé, alertes |
+| `GET` | `/api/projects/{id}/delays/` | retards déterministes (`reference_date` incluse) |
+
+**Écriture d'un jalon**
+
+```json
+{ "title": "Fondations terminées", "description": "…", "status": "DONE",
+  "planned_date": "2026-04-30", "actual_date": "2026-05-02", "order": 2, "weight": "2" }
+```
+
+**Écriture d'une tâche**
+
+```json
+{ "title": "Coulage des semelles", "milestone": 12, "status": "IN_PROGRESS",
+  "planned_start_date": "2026-03-01", "planned_end_date": "2026-03-20",
+  "actual_start_date": "2026-03-02", "progress": 40, "weight": 3,
+  "assignee_id": 7, "depends_on": [9, 10] }
+```
+
+**Réponse `GET /api/projects/{id}/schedule/`**
+
+```json
+{ "project": { "id", "name", "status", "progress", "planned_start_date", "planned_end_date" },
+  "milestones": [ { "id", "title", "status", "status_label", "planned_date", "actual_date",
+                    "order", "weight", "is_late", "days_late", "progress",
+                    "task_total", "task_done" } ],
+  "orphan_tasks": [ { "id", "title", "status", "progress", "is_late", "days_late" } ],
+  "summary": { "milestones_total": 4, "milestones_done": 1, "tasks_total": 12, "tasks_done": 5,
+               "tasks_late": 2, "milestones_late": 1, "names_late": ["…"] },
+  "alerts": [ { "type": "task_late|milestone_late", "id", "title", "days_late", "…_date" } ] }
+```
+
+**Erreurs spécifiques** : `dependent_not_in_project` et `dependency_not_in_project` → `400`
+(champ `depends_on`) · `dependency_cycle` → `409` · `invalid_status`, `invalid_ordering` → `400` ·
+dates incohérentes et avancement hors bornes → `400` avec le champ concerné ·
+`permission_denied` → `403` (projet visible) · projet hors périmètre → `404`.
+
+**Avancement** : calculé côté serveur à chaque écriture (voir `docs/flows/planning.md` §3) ;
+`progress` du projet est en lecture seule. Chaque écriture de jalon ou de tâche renvoie le champ
+`project_progress` (nouvel avancement du projet) et les suppressions `204` l'exposent dans
+l'en-tête `X-Project-Progress` — le client n'a donc jamais à recalculer quoi que ce soit. Performance : `/schedule/` reste à nombre constant de
+requêtes (`test_schedule_has_no_n_plus_one`).
 
 ## 6. Preuves terrain (Phase 5/6 — MVP-007, 008, 009)
 
