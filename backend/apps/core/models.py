@@ -121,6 +121,22 @@ class ActivityLog(models.Model):
         EVIDENCE_REJECTED = "EVIDENCE_REJECTED", "Preuve rejetée"
         EVIDENCE_FLAGGED = "EVIDENCE_FLAGGED", "Preuve signalée"
         EVIDENCE_REOPENED = "EVIDENCE_REOPENED", "Preuve rouverte"
+        # Phase 7 — finances.
+        BUDGET_LINE_CREATED = "BUDGET_LINE_CREATED", "Poste budgétaire créé"
+        BUDGET_LINE_UPDATED = "BUDGET_LINE_UPDATED", "Poste budgétaire modifié"
+        BUDGET_LINE_DELETED = "BUDGET_LINE_DELETED", "Poste budgétaire supprimé"
+        EXPENSE_CREATED = "EXPENSE_CREATED", "Dépense créée"
+        EXPENSE_UPDATED = "EXPENSE_UPDATED", "Dépense modifiée"
+        EXPENSE_SUBMITTED = "EXPENSE_SUBMITTED", "Dépense soumise"
+        EXPENSE_APPROVED = "EXPENSE_APPROVED", "Dépense approuvée"
+        EXPENSE_REJECTED = "EXPENSE_REJECTED", "Dépense rejetée"
+        EXPENSE_CANCELLED = "EXPENSE_CANCELLED", "Dépense annulée"
+        EXPENSE_RECEIPT_ATTACHED = "EXPENSE_RECEIPT_ATTACHED", "Justificatif attaché"
+        PAYMENT_RECORDED = "PAYMENT_RECORDED", "Paiement enregistré"
+        PAYMENT_CANCELLED = "PAYMENT_CANCELLED", "Paiement annulé"
+        ADJUSTMENT_RECORDED = "ADJUSTMENT_RECORDED", "Ajustement financier"
+        BUDGET_THRESHOLD_REACHED = "BUDGET_THRESHOLD_REACHED", "Seuil budgétaire atteint"
+        BUDGET_EXCEEDED = "BUDGET_EXCEEDED", "Budget dépassé"
 
     id = models.BigAutoField(primary_key=True)
     actor = models.ForeignKey(

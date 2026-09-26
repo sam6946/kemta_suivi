@@ -161,7 +161,32 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - **Actions en ligne uniquement** (jamais mises en file en silence) : inscription, connexion, OTP
   et **réinitialisation du mot de passe** — l'interface l'annonce et propose « Réessayer ».
 
-## 9. Documentation
+## 9. Périmètre financier (Phase 7)
+
+- **Budget tenu côté serveur** : postes budgétaires (somme ≤ budget du projet), dépenses,
+  paiements et un **grand livre *append-only*** qui porte le solde après chaque écriture.
+- **Montants en FCFA entiers** : les centimes sont refusés, jamais arrondis en silence. Aucun
+  total n'est accepté en entrée : le consommé, le payé, le solde et le taux sont **calculés en SQL**
+  depuis le grand livre, et les listes restent à nombre de requêtes constant (pas de N+1).
+- **Atomique et concurrent** : chaque opération critique est enveloppée dans
+  `transaction.atomic()` avec `select_for_update()` sur le projet ; deux paiements simultanés ne
+  peuvent pas dépasser le montant dû, et une panne en cours d'écriture ne laisse rien derrière
+  (tests de rollback et de concurrence dédiés).
+- **Dépassements visibles** : l'engagement au-delà du budget (ou d'un poste) est refusé
+  (`422`) sauf **motif explicite** (≥ 10 caractères), alors journalisé ; les franchissements des
+  seuils 80 % et 100 % sont journalisés une seule fois, et les alertes restent affichées.
+- **Permissions à trois niveaux** : consulter (`view_finance`), gérer une dépense avant
+  approbation (`manage_finance`), **engager de l'argent** (`settle_finance` — rôles de pilotage
+  uniquement). Un contractant peut saisir ses factures, jamais les approuver ni les payer.
+- **Traçabilité** : chaque création, modification, approbation, rejet, annulation, paiement et
+  ajustement est journalisé avec auteur, date et **valeurs avant/après** ; une correction passe
+  par une contre-écriture, jamais par une suppression.
+- **Justificatifs** : PDF ou photo (JPEG/PNG/WebP) vérifiés par leur **signature binaire**,
+  empreints en SHA-256, servis de façon privée.
+- **En ligne uniquement** : les opérations financières ne sont pas mises en file hors ligne —
+  l'interface l'indique et propose de réessayer (contrairement aux preuves terrain).
+
+## 10. Documentation
 
 | Document | Contenu |
 |---|---|
@@ -175,10 +200,11 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 | [`docs/flows/project.md`](docs/flows/project.md) | Flux organisation → projet → membres, règles d'accès 403/404, performance |
 | [`docs/flows/planning.md`](docs/flows/planning.md) | Flux jalons/tâches, règles de calcul d'avancement et de retard, permissions |
 | [`docs/flows/evidences.md`](docs/flows/evidences.md) | Flux preuve terrain : capture hors ligne, envoi idempotent, périmètre, validation, historique |
+| [`docs/flows/finance.md`](docs/flows/finance.md) | Flux financier : budget, cycle de vie des dépenses, paiements, dépassements, contre-écritures, concurrence |
 | [`docs/offline-sync.md`](docs/offline-sync.md) | Stratégie offline-first : file locale, reprise, conflits, cache (implémentée en phase 6) |
 | [`docs/STATUS.md`](docs/STATUS.md) | État d'avancement phase par phase et fonctionnalité par fonctionnalité |
 
-## 10. Structure du dépôt
+## 11. Structure du dépôt
 
 ```
 backend/     config/ (settings, urls, celery) · apps/core (journal, santé, erreurs, montants) ·
@@ -191,7 +217,7 @@ docs/        cadrage Phase 0 et spécifications
 docker-compose.yml · docker-compose.prod.yml · .env.example
 ```
 
-## 11. Règles non négociables du projet
+## 12. Règles non négociables du projet
 
 1. Aucun secret dans le dépôt : uniquement des variables d'environnement (`.env.example` documenté).
 2. Aucun OTP, mot de passe ou jeton en clair — ni en base, ni dans les logs, ni dans les réponses.

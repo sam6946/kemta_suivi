@@ -78,6 +78,18 @@ plateforme (supervision) est la seule exception documentée.
 | Modifier le budget | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | Voir les journaux financiers | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 
+**Trois niveaux, implémentés dans `apps/finance/access.py` (phase 7)** :
+
+1. `view_finance` — lire le budget, les dépenses, les paiements et le grand livre ;
+2. `manage_finance` — créer, corriger, soumettre une dépense et déposer un justificatif
+   (le drapeau `can_manage_finance` suffit — un contractant peut saisir ses factures) ;
+3. **engagement** (`can_settle_finance`) — approuver, rejeter, annuler, payer, tenir le budget,
+   ajuster : capacité `manage_finance` **et** rôle ∈ {PLATFORM_ADMIN, ORG_OWNER, PROJECT_OWNER,
+   FINANCE}. Un contractant doté du drapeau n'engage donc jamais d'argent (décision ADR-012).
+
+Un projet hors périmètre répond **404** (son existence n'est pas révélée) ; un membre sans
+capacité financière répond **403**. Détail des règles : `docs/flows/finance.md` §9.
+
 ## 7. Matrice — journalisation et exploitation
 
 | Action | PLATFORM_ADMIN | ORG_OWNER | PROJECT_OWNER | ENGINEER | CONTRACTOR | FIELD_AGENT | VALIDATOR | FINANCE | INVESTOR |

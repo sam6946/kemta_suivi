@@ -219,6 +219,89 @@ function mockApi({
         order: 1, weight: "1.00", is_late: false, days_late: 0, progress: 0, task_total: 0,
         task_done: 0, created_at: "", updated_at: "" }, 201);
     }
+    // Phase 7 — l'onglet finances du projet charge sa synthèse à l'affichage.
+    if (url.match(/\/api\/projects\/\d+\/finance\/$/)) {
+      return jsonResponse({
+        project: { id: 12, code: "RBS-T1", name: "Résidence Bonamoussadi — tranche 1", currency: "XAF" },
+        budget: {
+          planned: 85000000,
+          allocated: 0,
+          unallocated: 85000000,
+          committed: 0,
+          paid: 0,
+          outstanding: 0,
+          balance: 85000000,
+          consumption_rate: "0.00",
+          threshold: "OK",
+          currency: "XAF",
+        },
+        lines: [],
+        alerts: [],
+        permissions: {
+          view_finance: true,
+          manage_finance: manager,
+          settle_finance: manager,
+          can_approve: manager,
+          can_pay: manager,
+          can_edit: manager,
+          can_cancel: manager,
+        },
+        generated_at: "2026-09-26T08:00:00Z",
+      });
+    }
+    if (url.match(/\/api\/projects\/\d+\/budget-lines\/$/)) {
+      return jsonResponse({
+        count: 0,
+        results: [],
+        summary: {
+          planned: 85000000,
+          allocated: 0,
+          unallocated: 85000000,
+          committed: 0,
+          paid: 0,
+          outstanding: 0,
+          balance: 85000000,
+          consumption_rate: "0.00",
+          threshold: "OK",
+          currency: "XAF",
+          lines: [],
+          alerts: [],
+        },
+        categories: [{ value: "MATERIALS", label: "Matériaux" }],
+      });
+    }
+    if (url.match(/\/api\/projects\/\d+\/expenses\//)) {
+      return jsonResponse({
+        count: 0,
+        next: null,
+        previous: null,
+        results: [],
+        summary: {
+          planned: 85000000,
+          allocated: 0,
+          unallocated: 85000000,
+          committed: 0,
+          paid: 0,
+          outstanding: 0,
+          balance: 85000000,
+          consumption_rate: "0.00",
+          threshold: "OK",
+          currency: "XAF",
+          lines: [],
+          alerts: [],
+        },
+        counts: { draft: 0, submitted: 0, approved: 0, paid: 0, rejected: 0, cancelled: 0 },
+      });
+    }
+    if (url.match(/\/api\/projects\/\d+\/transactions\//)) {
+      return jsonResponse({
+        count: 0,
+        next: null,
+        previous: null,
+        results: [],
+        totals: { committed: 0, paid: 0, adjustments: 0, balance: 85000000 },
+      });
+    }
     if (url.startsWith("/api/meta/status/")) {
       return jsonResponse({
         project: [{ value: "ACTIVE", label: "En cours" }],
@@ -322,7 +405,8 @@ describe("ProjectDetailPage", () => {
     expect(screen.queryByRole("button", { name: /ajouter au projet/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retirer/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /archiver le projet/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/lecture seule/i)).toBeInTheDocument();
+    // Plusieurs blocs (membres, budget) rappellent la lecture seule : on vérifie la présence.
+    expect(screen.getAllByText(/lecture seule/i).length).toBeGreaterThan(0);
   });
 
   it("affiche le planning : jalons, tâches, retards et avancement calculé", async () => {

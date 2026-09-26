@@ -113,7 +113,12 @@ PROJECTS = [
         "status": "ACTIVE",
         "planned_start_date": "2025-11-03",
         "planned_end_date": "2026-11-30",
-        "members": {"PROJECT_OWNER": {}, "CONTRACTOR": {}, "FIELD_AGENT": {}},
+        "members": {
+            "PROJECT_OWNER": {},
+            "CONTRACTOR": {},
+            "FIELD_AGENT": {},
+            "FINANCE": {"can_manage_finance": True},
+        },
     },
     {
         "organization": "be",
@@ -195,6 +200,200 @@ EVIDENCES = {
             "status": "FLAGGED",
         },
     ],
+}
+
+
+# Budget et dépenses de démonstration (phase 7) : les montants sont écrits par les **services**
+# financiers (jamais à la main), donc le grand livre, les seuils et le journal restent cohérents.
+#
+# Statuts couverts : brouillon, soumise, approuvée, payée, rejetée et annulée (contre-écriture).
+FINANCE_PLAN = {
+    "RBS-T1": {
+        "lines": [
+            ("Matériaux de construction", "MATERIALS", 32_000_000, "Ciment, fer à béton, agrégats"),
+            ("Main-d'œuvre", "LABOUR", 18_000_000, "Maçonnerie, ferraillage, finitions"),
+            ("Matériel et engins", "EQUIPMENT", 12_000_000, "Location grue, bétonnières"),
+            ("Transport et carburant", "TRANSPORT", 6_000_000, ""),
+            ("Frais administratifs", "ADMIN", 4_000_000, ""),
+            ("Sous-traitance électricité", "SUBCONTRACT", 8_000_000, ""),
+        ],
+        "expenses": [
+            {
+                "title": "Ciment CIMENCAM — 800 sacs de 50 kg",
+                "amount": 4_800_000,
+                "line": "Matériaux de construction",
+                "incurred_offset": -38,
+                "supplier": "CIMENCAM Douala",
+                "invoice_number": "FAC-2026-0141",
+                "status": "PAID",
+                "receipt": "facture-cimencam-0141.pdf",
+                "payments": [
+                    {
+                        "amount": 500_000,
+                        "method": "CASH",
+                        "reference": "AV-0141",
+                        "offset": -37,
+                        "cancel": "Avance encaissée en double : remboursée au fournisseur.",
+                    },
+                    {
+                        "amount": 4_800_000,
+                        "method": "BANK_TRANSFER",
+                        "reference": "VIR-2026-0141",
+                        "offset": -35,
+                    },
+                ],
+            },
+            {
+                "title": "Fer à béton HA 12 — 12 tonnes",
+                "amount": 5_200_000,
+                "line": "Matériaux de construction",
+                "incurred_offset": -26,
+                "supplier": "Métal Plus Douala",
+                "invoice_number": "FAC-2026-0207",
+                "status": "APPROVED",
+                "payments": [
+                    {
+                        "amount": 2_000_000,
+                        "method": "MOBILE_MONEY",
+                        "reference": "MM-77231",
+                        "offset": -20,
+                    }
+                ],
+            },
+            {
+                "title": "Main-d'œuvre — semaine 6 (6 maçons)",
+                "amount": 3_000_000,
+                "line": "Main-d'œuvre",
+                "incurred_offset": -9,
+                "supplier": "Équipe maçonnerie Nkoulou",
+                "invoice_number": "",
+                "status": "SUBMITTED",
+            },
+            {
+                "title": "Location grue mobile 25 t — 3 jours",
+                "amount": 1_800_000,
+                "line": "Matériel et engins",
+                "incurred_offset": -2,
+                "supplier": "Engins Littoral",
+                "invoice_number": "DEV-2026-118",
+                "status": "DRAFT",
+            },
+            {
+                "title": "Carburant engins — semaine 5",
+                "amount": 650_000,
+                "line": "Transport et carburant",
+                "incurred_offset": -14,
+                "supplier": "Station Tradex Bonabéri",
+                "invoice_number": "TX-2026-5512",
+                "status": "REJECTED",
+                "reject_comment": "Facture sans bon de livraison : à reprendre avec le bordereau.",
+            },
+            {
+                "title": "Étude géotechnique complémentaire",
+                "amount": 1_200_000,
+                "line": "Frais administratifs",
+                "incurred_offset": -30,
+                "supplier": "GéoSol Cameroun",
+                "invoice_number": "FAC-2026-0088",
+                "status": "CANCELLED",
+                "cancel_comment": "Prestation finalement assurée par le bureau d'études interne.",
+            },
+        ],
+    },
+    "AKW-T2": {
+        "lines": [
+            ("Gros œuvre — fondations et structure", "MATERIALS", 62_000_000, ""),
+            ("Second œuvre", "LABOUR", 30_000_000, ""),
+            ("Études et contrôle", "SUBCONTRACT", 25_000_000, ""),
+            ("Matériel et engins", "EQUIPMENT", 20_000_000, ""),
+            ("Frais administratifs", "ADMIN", 5_000_000, ""),
+        ],
+        # 118 M engagés sur 145 M : la démo montre l'alerte de seuil (81 %) **et** un poste dépassé.
+        "expenses": [
+            {
+                "title": "SOGEA — fondations et structure niveau 1",
+                "amount": 95_000_000,
+                "line": "Gros œuvre — fondations et structure",
+                "incurred_offset": -22,
+                "supplier": "SOGEA Cameroun",
+                "invoice_number": "FAC-SOG-2026-118",
+                "status": "APPROVED",
+                "override_reason": "Avenant n°1 validé par la maîtrise d'ouvrage (gros œuvre révisé).",
+                "receipt": "situation-sogea-118.pdf",
+                "payments": [
+                    {
+                        "amount": 60_000_000,
+                        "method": "BANK_TRANSFER",
+                        "reference": "VIR-SOG-118",
+                        "offset": -15,
+                    }
+                ],
+            },
+            {
+                "title": "Études d'exécution béton armé",
+                "amount": 23_000_000,
+                "line": "Études et contrôle",
+                "incurred_offset": -11,
+                "supplier": "Ingénierie Littoral",
+                "invoice_number": "FAC-BET-2026-044",
+                "status": "APPROVED",
+            },
+        ],
+    },
+    "VCK-01": {
+        "lines": [
+            ("Terrassement et couche de forme", "MATERIALS", 45_000_000, ""),
+            ("Couche de base — latérite traitée", "MATERIALS", 80_000_000, ""),
+            ("Revêtement bitumineux", "SUBCONTRACT", 120_000_000, ""),
+            ("Signalisation et sécurité", "OTHER", 25_000_000, ""),
+            ("Frais généraux de chantier", "ADMIN", 15_000_000, ""),
+        ],
+        "expenses": [
+            {
+                "title": "Terrassement phase 1 — 4 km",
+                "amount": 40_000_000,
+                "line": "Terrassement et couche de forme",
+                "incurred_offset": -18,
+                "supplier": "BTP Kribi SARL",
+                "invoice_number": "SIT-2026-007",
+                "status": "APPROVED",
+                "payments": [
+                    {
+                        "amount": 20_000_000,
+                        "method": "BANK_TRANSFER",
+                        "reference": "VIR-KRI-007",
+                        "offset": -12,
+                    }
+                ],
+            },
+            {
+                "title": "Fourniture latérite — 3 000 m³",
+                "amount": 12_000_000,
+                "line": "Couche de base — latérite traitée",
+                "incurred_offset": -5,
+                "supplier": "Carrière de Lolabé",
+                "invoice_number": "FAC-LOL-2026-031",
+                "status": "SUBMITTED",
+            },
+        ],
+    },
+    "REC-NKB": {
+        "lines": [
+            ("Réfection toiture et menuiserie", "MATERIALS", 9_000_000, ""),
+            ("Peinture et finitions", "LABOUR", 4_500_000, ""),
+        ],
+        "expenses": [
+            {
+                "title": "Tôle bac alu — devis fournisseur",
+                "amount": 4_200_000,
+                "line": "Réfection toiture et menuiserie",
+                "incurred_offset": -3,
+                "supplier": "Quincaillerie Nkolbisson",
+                "invoice_number": "DEV-NKB-2026-014",
+                "status": "DRAFT",
+            }
+        ],
+    },
 }
 
 
@@ -491,6 +690,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Ne créer que les comptes (sans organisations, projets ni membres).",
         )
+        parser.add_argument(
+            "--skip-finance",
+            action="store_true",
+            help="Ne pas créer le budget, les dépenses et les paiements de démonstration.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -534,12 +738,18 @@ class Command(BaseCommand):
                 milestones,
                 tasks,
                 evidences,
-            ) = self._seed_projects()
+                finance,
+            ) = self._seed_projects(with_finance=not options["skip_finance"])
             self.stdout.write(
                 f"{organizations} organisation(s), {projects} projet(s), "
                 f"{memberships} appartenance(s), {milestones} jalon(s), {tasks} tâche(s), "
                 f"{evidences} preuve(s) créés."
             )
+            if not options["skip_finance"]:
+                self.stdout.write(
+                    f"{finance['lines']} poste(s) budgétaire(s), {finance['expenses']} dépense(s), "
+                    f"{finance['payments']} paiement(s), {finance['receipts']} justificatif(s) créés."
+                )
 
         if ALL_ROLES:
             self.stdout.write("Rôles disponibles : " + ", ".join(ROLE_LABELS[r] for r in ALL_ROLES))
@@ -558,6 +768,201 @@ class Command(BaseCommand):
         if offset is None:
             return None
         return timezone.localdate() + timedelta(days=offset)
+
+    # ------------------------------------------------------------------
+    # Budget, dépenses et paiements de démonstration (phase 7)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _finance_actors(project, users_by_role):
+        """Deux acteurs distincts pour la démonstration : créer puis approuver.
+
+        La séparation des tâches est une règle produit : on choisit donc un créateur et un
+        approbateur différents quand le projet le permet, avec l'administrateur plateforme
+        en dernier recours (projets de démonstration sans responsable financier).
+        """
+        from apps.projects.models import ProjectMember
+        from apps.users.roles import Role
+
+        preference = (Role.FINANCE, Role.PROJECT_OWNER, Role.ORG_OWNER)
+        members = list(
+            ProjectMember.objects.filter(project=project, is_active=True).select_related("user")
+        )
+        by_role = {member.role: member.user for member in members}
+
+        def pick(exclude=None):
+            for role in preference:
+                candidate = by_role.get(role)
+                if candidate is not None and candidate != exclude:
+                    return candidate
+            return next(
+                (
+                    member.user
+                    for member in members
+                    if member.can_manage_finance and member.user != exclude
+                ),
+                None,
+            )
+
+        fallback = users_by_role.get(Role.PLATFORM_ADMIN)
+        creator = pick() or fallback
+        approver = pick(exclude=creator) or fallback
+        return creator, approver
+
+    @staticmethod
+    def _receipt_file(filename: str):
+        """Justificatif de démonstration : un PDF minimal, généré en mémoire (aucun binaire suivi)."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        payload = (
+            b"%PDF-1.4\n"
+            b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+            b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]>>endobj\n"
+            b"trailer<</Root 1 0 R>>\n%%EOF\n"
+        )
+        return SimpleUploadedFile(filename, payload, content_type="application/pdf")
+
+    @transaction.atomic
+    def _seed_finance(self, projects_by_code: dict) -> dict:
+        """Budget, dépenses et paiements de démonstration — **idempotent**.
+
+        Tout passe par `apps.finance.services` : engagements, seuils et journal d'activité sont
+        la conséquence des règles métier (jamais d'un `INSERT` direct), donc les totaux affichés
+        par la synthèse correspondent exactement au grand livre.
+        """
+        from apps.core.exceptions import KemtaAPIError
+        from apps.finance.models import BudgetLine, Expense, ExpenseStatus
+        from apps.finance.services import (
+            attach_receipt,
+            cancel_payment,
+            create_budget_line,
+            create_expense,
+            register_payment,
+            transition_expense,
+        )
+
+        users_by_role = {user.role: user for user in User.objects.all()}
+        counts = {"lines": 0, "expenses": 0, "payments": 0, "receipts": 0}
+
+        for code, plan in FINANCE_PLAN.items():
+            project = projects_by_code.get(code)
+            if project is None:
+                continue
+            creator, approver = self._finance_actors(project, users_by_role)
+            if creator is None:
+                continue
+
+            lines_by_label: dict[str, BudgetLine] = {}
+            for index, (label, category, planned, notes) in enumerate(plan["lines"]):
+                line = BudgetLine.objects.filter(project=project, label=label).first()
+                if line is None:
+                    line = create_budget_line(
+                        project=project,
+                        actor=creator,
+                        data={
+                            "label": label,
+                            "category": category,
+                            "planned_amount": planned,
+                            "order": index,
+                            "notes": notes,
+                        },
+                    )
+                    counts["lines"] += 1
+                lines_by_label[label] = line
+
+            for spec in plan["expenses"]:
+                guard = {"project": project}
+                if spec.get("invoice_number"):
+                    guard["invoice_number"] = spec["invoice_number"]
+                else:
+                    guard["title"] = spec["title"]
+                if Expense.objects.filter(**guard).exists():
+                    continue
+
+                expense = create_expense(
+                    project=project,
+                    actor=creator,
+                    data={
+                        "title": spec["title"],
+                        "description": spec.get("description", ""),
+                        "amount": spec["amount"],
+                        "incurred_on": self._day(spec["incurred_offset"]),
+                        "budget_line": lines_by_label.get(spec.get("line")),
+                        "supplier": spec.get("supplier", ""),
+                        "invoice_number": spec.get("invoice_number", ""),
+                    },
+                )
+                counts["expenses"] += 1
+
+                if spec.get("receipt"):
+                    attach_receipt(
+                        expense=expense,
+                        actor=creator,
+                        upload=self._receipt_file(spec["receipt"]),
+                    )
+                    counts["receipts"] += 1
+
+                status = spec["status"]
+                if status != ExpenseStatus.DRAFT:
+                    transition_expense(expense=expense, actor=creator, action="SUBMIT")
+                if status in {
+                    ExpenseStatus.APPROVED,
+                    ExpenseStatus.PAID,
+                    ExpenseStatus.CANCELLED,
+                }:
+                    try:
+                        transition_expense(
+                            expense=expense,
+                            actor=approver,
+                            action="APPROVE",
+                            override_reason=spec.get("override_reason", ""),
+                        )
+                    except KemtaAPIError as error:  # pragma: no cover - garde-fou de seed
+                        raise CommandError(
+                            f"Approbation refusée ({code} / {spec['title']}) : {error.message}"
+                        ) from error
+                elif status == ExpenseStatus.REJECTED:
+                    transition_expense(
+                        expense=expense,
+                        actor=approver,
+                        action="REJECT",
+                        comment=spec.get("reject_comment", ""),
+                    )
+
+                for payment_spec in spec.get("payments", []):
+                    try:
+                        payment = register_payment(
+                            expense=expense,
+                            actor=approver,
+                            data={
+                                "amount": payment_spec["amount"],
+                                "paid_on": self._day(payment_spec["offset"]),
+                                "method": payment_spec["method"],
+                                "reference": payment_spec.get("reference", ""),
+                            },
+                        )
+                    except KemtaAPIError as error:  # pragma: no cover - garde-fou de seed
+                        raise CommandError(
+                            f"Paiement de démonstration refusé ({code} / {spec['title']}) : "
+                            f"{error.message}"
+                        ) from error
+                    counts["payments"] += 1
+                    if payment_spec.get("cancel"):
+                        cancel_payment(
+                            payment=payment,
+                            actor=approver,
+                            reason=payment_spec["cancel"],
+                        )
+
+                if status == ExpenseStatus.CANCELLED:
+                    transition_expense(
+                        expense=expense,
+                        actor=approver,
+                        action="CANCEL",
+                        comment=spec.get("cancel_comment", ""),
+                    )
+
+        return counts
 
     @transaction.atomic
     def _seed_planning(self, projects_by_code: dict) -> tuple[int, int]:
@@ -715,7 +1120,7 @@ class Command(BaseCommand):
 
         return created
 
-    def _seed_projects(self) -> tuple[int, int, int, int, int, int]:
+    def _seed_projects(self, with_finance: bool = True) -> tuple:
         from apps.organizations.models import Organization, OrganizationMember
         from apps.projects.models import Project, ProjectMember
 
@@ -784,6 +1189,11 @@ class Command(BaseCommand):
 
         created_milestones, created_tasks = self._seed_planning(projects_by_code)
         created_evidences = self._seed_evidences(projects_by_code)
+        finance = (
+            self._seed_finance(projects_by_code)
+            if with_finance
+            else {"lines": 0, "expenses": 0, "payments": 0, "receipts": 0}
+        )
 
         return (
             created_organizations,
@@ -792,4 +1202,5 @@ class Command(BaseCommand):
             created_milestones,
             created_tasks,
             created_evidences,
+            finance,
         )

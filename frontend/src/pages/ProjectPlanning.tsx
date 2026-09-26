@@ -170,7 +170,7 @@ export default function ProjectPlanning({ project, members, onChanged }: Props) 
   if (loading && !schedule) return <div className="field-hint">Chargement du planning…</div>;
 
   return (
-    <section className="card" data-testid="planning">
+    <section className="card" id="planning" data-testid="planning">
       <h2 style={{ fontSize: "1rem", marginTop: 0 }}>
         Planning — avancement calculé : {formatPercent(schedule?.project.progress ?? 0)}
       </h2>

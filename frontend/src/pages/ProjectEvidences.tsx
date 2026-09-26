@@ -314,7 +314,7 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
     (project.status === "ACTIVE" || project.status === "ON_HOLD" || project.status === "DRAFT");
 
   return (
-    <section className="card" data-testid="evidences">
+    <section className="card" id="preuves" data-testid="evidences">
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <h2 style={{ fontSize: "1rem", margin: 0 }}>
           Preuves terrain ({counts.pending + counts.validated + counts.rejected + counts.flagged})

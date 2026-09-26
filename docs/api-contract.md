@@ -303,15 +303,119 @@ ligne `EvidenceValidation` (acteur, date, action, commentaire) et un `ActivityLo
 `evidence_reopened`). Champ `permissions` renvoyé par preuve :
 `{ validate_evidence, cannot_validate_own, can_see_location }` — l'UI n'invente aucune règle.
 
-## 7. Finances et dashboard (Phase 7/8 — MVP-010, 011)
+## 7. Finances (Phase 7 — MVP-010)
 
-`GET`/`POST` `/api/projects/{id}/budget-lines/` · `GET`/`POST` `/api/projects/{id}/expenses/` ·
-`GET`/`PATCH` `/api/expenses/{id}/` · `POST` `/api/expenses/{id}/transition/` ·
-`POST` `/api/expenses/{id}/payments/` · `GET` `/api/projects/{id}/transactions/` ·
+Règles métier complètes : `docs/flows/finance.md`. Tous les montants sont des **entiers FCFA**.
+Les champs calculés (`committed_amount`, `paid_amount`, `outstanding_amount`, `balance`,
+`balance_after`, `consumption_rate`, `totals`, `summary`) sont **en lecture seule** : un total
+envoyé par le client est ignoré, jamais repris.
+
+| # | Méthode | Endpoint | Permission | Description |
+|---|---|---|---|---|
+| F1 | `GET` | `/api/projects/{id}/budget-lines/` | `view_finance` | Postes + synthèse + catégories |
+| F2 | `POST` | `/api/projects/{id}/budget-lines/` | engagement | Créer un poste budgétaire |
+| F3 | `GET` | `/api/budget-lines/{id}/` | `view_finance` | Détail d'un poste |
+| F4 | `PATCH` | `/api/budget-lines/{id}/` | engagement | Réviser libellé / montant / catégorie |
+| F5 | `DELETE` | `/api/budget-lines/{id}/` | engagement | Suppression logique (refusée si des dépenses existent) |
+| F6 | `GET` | `/api/projects/{id}/expenses/` | `view_finance` | Dépenses paginées (`status`, `budget_line`, `unpaid`, `ordering`) + `summary` + `counts` |
+| F7 | `POST` | `/api/projects/{id}/expenses/` | `manage_finance` | Créer une dépense (brouillon) |
+| F8 | `GET` | `/api/expenses/{id}/` | `view_finance` | Détail (payé, reste dû, paiements, permissions) |
+| F9 | `PATCH` | `/api/expenses/{id}/` | `manage_finance` | Corriger avant engagement (`409 expense_locked` ensuite) |
+| F10 | `POST` | `/api/expenses/{id}/transition/` | `manage_finance` (`SUBMIT`) / engagement (autres) | `SUBMIT` · `APPROVE` · `REJECT` · `CANCEL` |
+| F11 | `GET` | `/api/expenses/{id}/payments/` | `view_finance` | Paiements + `totals` (montant, payé, reste dû) + moyens |
+| F12 | `POST` | `/api/expenses/{id}/payments/` | engagement | Enregistrer un paiement |
+| F13 | `POST` | `/api/payments/{id}/cancel/` | engagement | Annuler un paiement (contre-écriture) |
+| F14 | `GET`/`POST` | `/api/expenses/{id}/receipt/` | `view_finance` / `manage_finance` | Consulter ou déposer le justificatif |
+| F15 | `GET` | `/api/projects/{id}/transactions/` | `view_finance` | Grand livre paginé (`type`) + `totals` |
+| F16 | `GET` | `/api/projects/{id}/finance/` | `view_finance` | **Synthèse unique** : budget, lignes, alertes, permissions |
+| F17 | `POST` | `/api/projects/{id}/adjustments/` | engagement | Ajustement motivé (`DEBIT` / `CREDIT`) |
+
+### F16 `GET /api/projects/{id}/finance/` — réponse
+
+```json
+{
+  "project": { "id": 12, "code": "RBS-T1", "name": "Résidence Bonamoussadi — tranche 1", "currency": "XAF" },
+  "budget": {
+    "planned": 85000000, "allocated": 80000000, "unallocated": 5000000,
+    "committed": 10000000, "paid": 6800000, "outstanding": 3200000,
+    "balance": 75000000, "consumption_rate": "11.76", "threshold": "OK", "currency": "XAF"
+  },
+  "lines": [
+    { "budget_line": 5, "label": "Matériaux de construction", "category": "MATERIALS",
+      "planned": 32000000, "committed": 10000000 }
+  ],
+  "alerts": [
+    { "code": "BUDGET_LINE_EXCEEDED", "severity": "warning",
+      "message": "Poste « Gros œuvre — fondations et structure » dépassé : 95000000 FCFA engagés.",
+      "budget_line": 12, "amount": 33000000 }
+  ],
+  "permissions": { "view_finance": true, "manage_finance": true, "settle_finance": true,
+                   "can_approve": true, "can_pay": true, "can_edit": true, "can_cancel": true },
+  "generated_at": "2026-09-26T09:12:03Z"
+}
+```
+
+`threshold` : `OK` (< 80 %), `WARNING` (≥ 80 %), `EXCEEDED` (≥ 100 %). Les alertes sont
+**déterministes** (`BUDGET_THRESHOLD_REACHED`, `BUDGET_EXCEEDED`, `BUDGET_LINE_EXCEEDED`).
+
+### F10 `POST /api/expenses/{id}/transition/`
+
+```json
+{ "action": "APPROVE", "comment": "", "override_reason": "" }
+```
+`200` → la dépense à jour. `409 invalid_transition` (avec `allowed_actions`), `409 expense_locked`,
+`403 cannot_approve_own_expense`, `400 comment_required` (rejet sans motif),
+`409 expense_has_payments` (annulation d'une dépense partiellement payée),
+`422 budget_exceeded` (détails `overruns`, `min_override_reason_length`).
+
+### F12 `POST /api/expenses/{id}/payments/`
+
+```json
+{ "amount": 4800000, "paid_on": "2026-02-15", "method": "BANK_TRANSFER", "reference": "VIR-2026-0141" }
+```
+`201` → `{ "payment": {…}, "expense": {…} }` (la dépense peut passer `PAID`).
+`409 expense_not_approved`, `422 payment_exceeds_outstanding` (détails `outstanding`),
+`400 payment_date_in_future`.
+
+### F15 `GET /api/projects/{id}/transactions/` — `totals`
+
+```json
+{ "committed": 10000000, "paid": 6800000, "adjustments": 0, "balance": 75000000 }
+```
+Chaque écriture expose `type_label`, `direction_label`, `amount`, `balance_after` (solde **après**
+opération), l'auteur et la note/motif. Le grand livre n'est ni modifiable ni supprimable.
+
+### Erreurs propres aux finances
+
+| Code | HTTP | Sens |
+|---|---|---|
+| `budget_lines_exceed_budget` | 422 | la somme des postes dépasserait le budget global |
+| `budget_line_already_exists` | 409 | libellé déjà utilisé sur ce projet |
+| `budget_line_in_use` | 409 | poste portant des dépenses : suppression refusée |
+| `budget_line_other_project` | 400 | poste rattaché à un autre projet |
+| `expense_locked` | 409 | dépense engagée : modification refusée |
+| `cannot_approve_own_expense` | 403 | séparation des tâches |
+| `invalid_transition` | 409 | état incompatible (avec `allowed_actions`) |
+| `comment_required` | 400 | rejet sans motif |
+| `expense_has_payments` | 409 | annulation d'une dépense partiellement payée |
+| `budget_exceeded` | 422 | dépassement non motivé (détails `overruns`) |
+| `payment_exceeds_outstanding` | 422 | paiement au-delà du reste dû |
+| `expense_not_approved` | 409 | paiement d'une dépense non approuvée |
+| `payment_already_cancelled` | 409 | double annulation |
+| `reason_required` | 400 | ajustement sans motif |
+| `amount_has_cents` | 400 | centimes refusés (jamais arrondis) |
+| `invoice_already_used` | 409 | numéro de facture déjà présent sur le projet |
+| `receipt_not_available` | 404 | aucun justificatif |
+
+**Hors ligne** : aucune opération financière n'est mise en file (l'argent engagé exige
+l'autorité du serveur) ; l'interface l'annonce explicitement. Voir `docs/flows/finance.md` §1.
+
+## 8. Dashboard agrégé (Phase 8 — MVP-011)
+
 `GET` **`/api/projects/{id}/dashboard/`** (endpoint agrégé, une seule requête) ·
 `GET` `/api/projects/{id}/activity/` (journal paginé).
 
-### `GET /api/projects/{id}/dashboard/` — réponse
+### `GET /api/projects/{id}/dashboard/` — réponse (cible)
 ```json
 {
   "project": { "id", "name", "status", "currency": "XAF", "progress": 62 },
@@ -331,11 +435,10 @@ ligne `EvidenceValidation` (acteur, date, action, commentaire) et un `ActivityLo
   "generated_at": "2026-01-15T09:12:03Z"
 }
 ```
-Contrats : les montants sont calculés côté serveur (**les totaux envoyés par le client sont
-ignorés**) ; chaque sous-collection est **limitée** (5-10 éléments) avec un lien « voir tout » ;
-les alertes sont **déterministes** ; `permissions` reflète exactement le backend.
+Le bloc `budget` s'appuie déjà sur la synthèse de la phase 7 (`F16`) : mêmes calculs, mêmes
+alertes, aucune divergence possible.
 
-## 8. Santé et exploitation (Phase 1/11)
+## 9. Santé et exploitation (Phase 1/11)
 
 `GET /api/health/` → `200` si tout va bien, `503` sinon :
 ```json
@@ -345,7 +448,7 @@ les alertes sont **déterministes** ; `permissions` reflète exactement le backe
 Aucun secret, aucune donnée métier. `/api/health/` n'est **pas** authentifié mais n'expose rien
 de sensible (pas de version de librairies, pas de DEBUG).
 
-## 9. Outils de développement (jamais en production)
+## 10. Outils de développement (jamais en production)
 
 | Méthode | Endpoint | Disponibilité | Description |
 |---|---|---|---|
@@ -355,7 +458,7 @@ Désactivé dès que `DEBUG=false` ou `DJANGO_ENV=production` : la route renvoie
 (l'existence de l'endpoint n'est pas révélée). La réponse ne contient que les messages destinés
 à l'utilisateur, aucun secret technique.
 
-## 10. Règles transverses
+## 11. Règles transverses
 
 - Toute action sensible produit un `ActivityLog` (liste fermée, cf. `data-model.md` §7).
 - Toute collection est paginée ; les curseurs/alternatives sont interdits sans ADR.

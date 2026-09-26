@@ -9,6 +9,7 @@ import { fetchRoles, type RoleMeta } from "../api/roles";
 import { messageForErrorCode } from "../auth/passwordPolicy";
 import { Alert, Button, Field } from "../components/ui";
 import ProjectEvidences from "./ProjectEvidences";
+import ProjectFinance from "./ProjectFinance";
 import ProjectPlanning from "./ProjectPlanning";
 import { formatDate, formatFcfa, formatPercent } from "../lib/format";
 
@@ -142,10 +143,11 @@ export default function ProjectDetailPage() {
             <div className="metric-value">{formatDate(project.planned_end_date)}</div>
           </div>
         </div>
-        <p className="field-hint" style={{ marginTop: 12 }}>
-          Les preuves terrain (phase 5), le budget détaillé (phase 7) et le dashboard agrégé
-          (phase 8) arrivent ensuite : aucun indicateur n'est simulé ici.
-        </p>
+        <div className="links">
+          <a href="#planning">Planning</a>
+          <a href="#preuves">Preuves terrain</a>
+          <a href="#finances">Finances</a>
+        </div>
         {project.permissions.archive_project ? (
           <Button variant="ghost" onClick={archive}>
             Archiver le projet
@@ -156,6 +158,17 @@ export default function ProjectDetailPage() {
       <ProjectPlanning project={project} members={members} onChanged={load} />
 
       <ProjectEvidences project={project} onChanged={load} />
+
+      {/* MVP-010 — budget, dépenses, paiements et grand livre (calculs serveur uniquement) */}
+      {project.permissions.view_finance ? (
+        <ProjectFinance project={project} onChanged={load} />
+      ) : (
+        <section className="card">
+          <Alert tone="info">
+            Les informations financières de ce projet ne sont pas accessibles avec votre rôle.
+          </Alert>
+        </section>
+      )}
 
       <section className="card">
         <h2 style={{ fontSize: "1rem", marginTop: 0 }}>Membres ({members.length})</h2>

@@ -191,35 +191,57 @@ prochain essai (retry exponentiel).
 
 ---
 
-## 5. Finances (Phase 7)
+## 5. Finances (Phase 7 — implémenté)
 
-### `BudgetLine`
-`project` · `label` · `category` · `planned_amount` · `order`.
+Règles métier détaillées : `docs/flows/finance.md`. Contrats d'API : `docs/api-contract.md` §7.
 
-### `Expense`
-`project` · `budget_line` (nullable) · `title` · `description` · `amount` · `currency` ·
-`incurred_on` · `status` (`DRAFT` / `SUBMITTED` / `APPROVED` / `REJECTED` / `PAID` / `CANCELLED`) ·
-`receipt` (fichier) · `created_by` · `validated_by` · `deleted_at`.
+### `BudgetLine` (poste budgétaire — `apps/finance/models.py`)
+`project` · `label` (**unique par projet**) · `category` (`MATERIALS` / `LABOUR` / `EQUIPMENT` /
+`SUBCONTRACT` / `TRANSPORT` / `ADMIN` / `OTHER`) · `planned_amount` (entier ≥ 0) · `order` ·
+`notes` · `created_by` · `created_at` / `updated_at` · `deleted_at` (**suppression logique**).
 
-### `Payment`
-`expense` · `amount` · `paid_on` · `method` (`CASH` / `BANK_TRANSFER` / `MOBILE_MONEY` / `CHEQUE`) ·
-`reference` · `created_by`.
+Invariant : la **somme des postes ≤ `Project.budget_total`** (vérifié à chaque création et
+révision). Un poste portant des dépenses ne peut pas être supprimé.
 
-### `FinancialTransaction` (grand livre, append-only)
-`project` · `type` (`EXPENSE` / `PAYMENT` / `ADJUSTMENT` / `CANCELLATION`) · `amount` ·
-`direction` (`DEBIT` / `CREDIT`) · `expense`/`payment` (FK nullable) · `balance_after` ·
-`created_by` · `created_at`.
+### `Expense` (dépense)
+`project` · `budget_line` (nullable, **même projet**) · `title` · `description` · `amount`
+(entier > 0) · `currency` · `incurred_on` · `invoice_number` (**unique par projet si renseigné**) ·
+`invoice_date` (≤ `incurred_on`) · `status` (`DRAFT` / `SUBMITTED` / `APPROVED` / `REJECTED` /
+`PAID` / `CANCELLED`) · `receipt` + `receipt_hash` (SHA-256 du contenu réel) · `created_by` ·
+`approved_by` / `approved_at` · `cancelled_at` · `deleted_at`.
 
-**Règles serveur**
-- Toute écriture financière passe par un **service** utilisant `transaction.atomic()` +
-  `select_for_update()` sur le projet/ligne budgétaire (concurrence).
-- `consumed = SUM(transactions DEBIT) - SUM(CANCELLATION)`, `balance = budget - consumed` :
-  calculés en SQL (`aggregate`), jamais à partir de valeurs envoyées par le client
-  (tout champ de total reçu est **ignoré**).
-- `consumed > budget` → alerte déterministe `BUDGET_THRESHOLD_REACHED` (seuils 80 % / 100 %).
-- Annulation = contre-écriture (pas de suppression physique).
+`is_editable` = `DRAFT` | `SUBMITTED` | `REJECTED` : après approbation, la dépense est figée
+(la correction passe par une annulation puis une nouvelle dépense).
 
----
+### `Payment` (paiement)
+`expense` · `amount` (entier > 0) · `paid_on` (non future) · `method` (`CASH` /
+`BANK_TRANSFER` / `MOBILE_MONEY` / `CHEQUE`) · `reference` · `note` · `created_by` ·
+`cancelled_at` / `cancelled_by`.
+
+Invariant : `Σ paiements vivants ≤ Expense.amount` (revérifié **après** écriture, sous verrou).
+
+### `FinancialTransaction` (grand livre — *append-only*)
+`project` · `type` (`EXPENSE` / `PAYMENT` / `ADJUSTMENT` / `CANCELLATION`) · `direction`
+(`DEBIT` / `CREDIT`) · `amount` · `expense` / `payment` / `budget_line` (FK nullable) ·
+`balance_after` (**solde du budget après opération**) · `note` · `created_by` · `created_at`.
+
+Immutabilité garantie à trois niveaux : `save()` d'une ligne existante, `delete()` de l'instance
+et `update()`/`delete()` du queryset lèvent `IntegrityError`. Aucune écriture n'est jamais
+supprimée ; une erreur se corrige par une **contre-écriture**.
+
+**Règles serveur (implémentées dans `apps/finance/services.py`)**
+- Toute écriture passe par un service : `transaction.atomic()` +
+  `select_for_update()` sur la ligne projet (et sur la dépense pour un paiement).
+- `committed = Σ(EXPENSE, DEBIT) − Σ(CANCELLATION d'une dépense)` + ajustements nets ;
+  `paid = Σ(PAYMENT, DEBIT) − Σ(CANCELLATION d'un paiement)` ;
+  `balance = Project.budget_total − committed` : calculés en SQL (`aggregate`), jamais depuis une
+  valeur client (tout total reçu est **ignoré**).
+- Le consommé par poste est agrégé en **une** requête pour toute la liste (`line_committed_map`) :
+  les listes et la synthèse restent à nombre de requêtes constant (tests dédiés).
+- Dépassement → `422 budget_exceeded` sauf `override_reason` motivé (≥ 10 caractères), alors
+  journalisé ; franchissement des seuils 80 % / 100 % journalisé une seule fois.
+- Le montant d'une dépense n'est engagé **qu'à l'approbation** ; un rejet ou une annulation
+  n'écrit rien (ou libère par contre-écriture ce qui avait été engagé).
 
 ## 6. Notifications et exploitation (Phase 10/11)
 
@@ -239,9 +261,12 @@ prochain essai (retry exponentiel).
 `ORG_CREATED` · `ORG_UPDATED` · `PROJECT_CREATED` · `PROJECT_UPDATED` · `PROJECT_ARCHIVED` ·
 `MEMBER_ADDED` · `MEMBER_ROLE_CHANGED` · `MEMBER_REMOVED` · `MILESTONE_CREATED` ·
 `MILESTONE_UPDATED` · `MILESTONE_CLOSED` · `TASK_CREATED` · `TASK_UPDATED` · `TASK_CLOSED` ·
-`EVIDENCE_UPLOADED` · `EVIDENCE_VALIDATED` · `EVIDENCE_REJECTED` · `EVIDENCE_FLAGGED` ·
-`EXPENSE_CREATED` · `EXPENSE_UPDATED` · `EXPENSE_APPROVED` · `EXPENSE_REJECTED` ·
-`PAYMENT_RECORDED` · `BUDGET_UPDATED` · `EXPORT_GENERATED`.
+`EVIDENCE_CAPTURED` · `EVIDENCE_VALIDATED` · `EVIDENCE_REJECTED` · `EVIDENCE_FLAGGED` ·
+`EVIDENCE_REOPENED` ·
+`BUDGET_LINE_CREATED` · `BUDGET_LINE_UPDATED` · `BUDGET_LINE_DELETED` · `EXPENSE_CREATED` ·
+`EXPENSE_UPDATED` · `EXPENSE_SUBMITTED` · `EXPENSE_APPROVED` · `EXPENSE_REJECTED` ·
+`EXPENSE_CANCELLED` · `EXPENSE_RECEIPT_ATTACHED` · `PAYMENT_RECORDED` · `PAYMENT_CANCELLED` ·
+`ADJUSTMENT_RECORDED` · `BUDGET_THRESHOLD_REACHED` · `BUDGET_EXCEEDED` · `EXPORT_GENERATED`.
 
 ## 8. Diagramme relationnel (texte)
 

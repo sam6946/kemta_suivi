@@ -176,18 +176,17 @@ def has_project_capability(user, project: Project, capability: str) -> bool:
     return resolve_capabilities(user, project).get(capability, False)
 
 
-def build_capabilities_map(user, projects) -> dict[int, dict[str, bool]]:
-    """Capacités pour **une collection** de projets, en un nombre constant de requêtes.
+def build_project_roles_map(user, projects) -> dict[int, str | None]:
+    """Rôle effectif par projet, pour **une collection**, en un nombre constant de requêtes.
 
-    Utilisé par les listes : sans cette vectorisation, afficher les permissions de chaque
-    projet générerait une requête par ligne (N+1 détecté et bloqué par les tests).
+    Même règle que `project_role` : le rôle par projet prime, sinon le rôle d'organisation
+    s'il est de pilotage ; l'administrateur plateforme voit tout.
     """
     projects = list(projects)
     if not projects:
         return {}
-
     if is_platform_admin(user):
-        return {project.pk: dict.fromkeys(PROJECT_CAPABILITIES, True) for project in projects}
+        return {project.pk: Role.PLATFORM_ADMIN for project in projects}
 
     project_ids = [project.pk for project in projects]
     organization_ids = {project.organization_id for project in projects}
@@ -209,7 +208,7 @@ def build_capabilities_map(user, projects) -> dict[int, dict[str, bool]]:
         )
     )
 
-    result: dict[int, dict[str, bool]] = {}
+    result: dict[int, str | None] = {}
     for project in projects:
         membership = memberships.get(project.pk)
         role = membership.role if membership is not None else None
@@ -220,7 +219,34 @@ def build_capabilities_map(user, projects) -> dict[int, dict[str, bool]]:
                 organization_role_value = organization_roles.get(project.organization_id)
                 if organization_role_value in {Role.ORG_OWNER, Role.PROJECT_OWNER}:
                     role = organization_role_value
-        capabilities = _capabilities_for(role, membership)
+        result[project.pk] = role
+    return result
+
+
+def build_capabilities_map(user, projects) -> dict[int, dict[str, bool]]:
+    """Capacités pour **une collection** de projets, en un nombre constant de requêtes.
+
+    Utilisé par les listes : sans cette vectorisation, afficher les permissions de chaque
+    projet générerait une requête par ligne (N+1 détecté et bloqué par les tests).
+    """
+    projects = list(projects)
+    if not projects:
+        return {}
+    roles = build_project_roles_map(user, projects)
+    memberships = (
+        {}
+        if is_platform_admin(user)
+        else {
+            membership.project_id: membership
+            for membership in ProjectMember.objects.filter(
+                user=user, project_id__in=[project.pk for project in projects], is_active=True
+            )
+        }
+    )
+
+    result: dict[int, dict[str, bool]] = {}
+    for project in projects:
+        capabilities = _capabilities_for(roles.get(project.pk), memberships.get(project.pk))
         result[project.pk] = {
             capability: capability in capabilities for capability in PROJECT_CAPABILITIES
         }
