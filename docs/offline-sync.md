@@ -1,11 +1,12 @@
-# Stratégie offline-first, synchronisation et cache (Phase 0 — implémentée en phase 6)
+# Stratégie offline-first, synchronisation et cache (phases 0 → 6)
 
-> **État au terme de la phase 5** : le socle serveur de la synchronisation est en place et testé —
-> `Idempotency-Key` **obligatoire** sur `POST /api/evidences/` (rejeu → même preuve, en-tête
-> `Idempotency-Replayed: true`), dédoublonnage par `hash_sha256` par projet (`409
-> duplicate_evidence` avec la preuve existante), empreinte calculée **sur l'appareil** avant envoi et
-> `sync_status` exposé par l'API. La file locale (IndexedDB) et `POST /api/sync/batch/` restent à
-> construire en phase 6 ; aucun changement de contrat n'est requis. Voir `docs/flows/evidences.md` §7.
+> **État au terme de la phase 6 : implémenté et testé.**
+> File locale IndexedDB + moteur de synchronisation côté navigateur (`frontend/src/lib/outbox.ts`,
+> `frontend/src/lib/db.ts`, `frontend/src/sync/SyncProvider.tsx`), lot serveur idempotent
+> (`POST /api/sync/batch/`), écran de suivi (`/synchronisation`) et badge global.
+> Couverture : 17 tests de file/moteur, 4 tests de reprise automatique, 6 tests d'écran,
+> 3 tests de capture hors ligne, 26 tests backend du lot. Voir `docs/api-contract.md` §6.1 et
+> `docs/flows/evidences.md` §7.
 
 Contexte : réseau 3G intermittent, chantiers hors zone de couverture, téléphones Android
 d'entrée/milieu de gamme. **Aucune action terrain critique ne doit dépendre d'une requête
@@ -44,7 +45,17 @@ séparément).
 
 ### Statuts locaux
 `PENDING` → `UPLOADING` → `SYNCED` ; échec → `FAILED` (relançable) ; divergence détectée →
-`CONFLICT`.
+`CONFLICT`. Ces statuts vivent **sur l'appareil** (IndexedDB) : le serveur ne voit que ce qu'il
+reçoit, avec `Evidence.sync_status = SYNCED`.
+
+### Ce qui est réellement stocké
+| Store | Contenu | Remarque d'implémentation |
+|---|---|---|
+| `outbox` | opérations à synchroniser | clé `opId` ; index `byStatus`, `byProject` |
+| photo en attente | binaire de la preuve **dans l'opération** | stocké en `ArrayBuffer` + type MIME : c'est la forme la plus universellement clonable par IndexedDB (certains navigateurs d'entrée de gamme perdent les `Blob` dans un clone structuré), reconstruit en `Blob` au moment de l'envoi |
+
+Le reste du schéma local (caches `projects`, `evidences`, `dashboards`, `meta`) est prévu au
+§4 et sera rempli écran par écran en phase 8 (dashboard agrégé).
 
 ### Format d'une opération
 ```json
@@ -71,12 +82,21 @@ séparément).
 
 ### Idempotence et déduplication
 - `idempotencyKey` UUID v4 généré **côté client à la création de l'opération locale**, conservé
-  après rechargement (persisté dans `outbox`).
-- Le serveur stocke `(user, endpoint, key)` : une clé déjà `DONE` renvoie la réponse d'origine ;
+  après rechargement (persisté dans `outbox`) ; il est réutilisé **tel quel** à chaque tentative,
+  y compris après fermeture de l'application.
+- Le serveur stocke `(user, idempotency_key)` dans `SyncOperation` : une clé déjà `DONE` renvoie
+  la réponse d'origine (`replayed: true`) ;
   une clé `IN_PROGRESS` renvoie `409 op_in_progress` (le client réessaie plus tard, sans créer de
   doublon).
 - `hash_sha256` du fichier calculé **côté client** (Web Crypto, `SubtleCrypto.digest`) et
   recalculé côté serveur : `(project, hash)` unique → doublon détecté même sans clé d'idempotence.
+
+### Classification des réponses du serveur
+| `status` du lot | Déclencheurs | Effet côté appareil |
+|---|---|---|
+| `SYNCED` | application réussie, ou rejeu d'une clé déjà appliquée | l'opération quitte la file |
+| `CONFLICT` | `permission_denied`, `invalid_transition`, `comment_required`, `cannot_validate_own_evidence`, `not_found`, `evidence_out_of_geofence`, `captured_at_in_future`, `op_in_progress`, `idempotency_key_conflict` | **aucun réessai automatique** : l'utilisateur voit le motif et décide (relancer après correction, ou abandonner) |
+| `FAILED` | réseau, erreur serveur 5xx, réponse incomplète | nouvel essai automatique avec délai croissant, jusqu'à la limite |
 
 ### Conflits
 | Cas | Règle documentée |
@@ -85,17 +105,27 @@ séparément).
 | Statut de preuve changé par un validateur pendant l'upload | **le serveur gagne** ; l'UI affiche le nouveau statut et l'historique |
 | Champs de tâche modifiés des deux côtés | last-write-wins sur `updated_at`, avec `ActivityLog` des deux versions ; les champs financiers ne sont **jamais** modifiables offline |
 | Montant de dépense modifié offline | **interdit** : les écritures financières nécessitent le réseau (intégrité d'abord) |
-| Doublon de fichier | `409 duplicate_evidence` → l'existante est affichée, l'opération passe `SYNCED` (sans doublon) |
+| Doublon de fichier | `409 duplicate_evidence` → l'existante est affichée, l'opération passe `SYNCED` (sans doublon) — implémenté |
 
 Toute règle de conflit est testée ; aucun conflit n'est résolu silencieusement sans historique.
 
-## 4. Interface de suivi
+## 4. Interface de suivi (implémentée)
 
-Écran « Synchronisation » + badge global : nombre d'éléments `PENDING`/`FAILED`/`CONFLICT`,
-dernière synchro, bouton « Tout relancer », détail par élément (type, projet, erreur, tentative).
-Les preuves non synchronisées sont marquées dans la galerie. Les erreurs sont comptabilisées
-(métrique `sync_failed_total`) et journalisées côté client (niveau `warn`, sans données
-personnelles).
+- **Badge global** (`SyncBadge`) : visible sur le tableau de bord et dans la section Preuves —
+  « Hors ligne », « N en attente », « N à vérifier », « À jour », avec bouton *Réessayer* et lien
+  vers le suivi.
+- **Écran `/synchronisation`** : compteurs, drapeau d'alerte si la persistance locale n'est pas
+  garantie (navigation privée), dernier passage, liste des éléments non synchronisés (libellé,
+  projet, essais, motif d'échec, taille de la photo) avec *Relancer*, *Abandonner* et
+  *Synchroniser maintenant* / *Tout relancer*.
+- **Galerie du chantier** : les preuves encore sur l'appareil apparaissent en cartes locales
+  « En attente d'envoi » / « Envoi en cours » / « À vérifier », distinctes des preuves serveur.
+- **Déclencheurs de synchronisation** (aucune action obligatoire) : démarrage de l'application,
+  événement `online`, retour de visibilité de l'onglet, mise en file d'une nouvelle capture,
+  relance manuelle. Chaque échec programme **un seul** réveil à l'échéance du retry exponentiel
+  (pas de polling : contrainte « pas de boucle < 30 s » respectée).
+- **Journalisation locale** : le moteur ne journalise jamais de donnée personnelle ; les compteurs
+  de la file (en attente / échecs / conflits / envoyées) servent de métrique d'échec.
 
 ## 5. Stratégie de cache
 
@@ -123,7 +153,7 @@ mode sans cache** (jamais d'erreur 500 pour une panne de cache).
 |---|---|
 | Premier rendu dashboard (cache froid) | < 3 s, **≤ 3 requêtes réseau** |
 | Dashboard en cache | < 500 ms |
-| Capture + mise en file d'une preuve (hors ligne) | < 2 s |
+| Capture + mise en file d'une preuve (hors ligne) | < 2 s — aucune I/O réseau sur ce chemin (écriture IndexedDB uniquement) |
 | Upload d'une preuve compressée (≈ 300 Ko, 3G) | < 10 s |
 | Nombre de requêtes SQL du dashboard | ≤ 12 (asserté en test) |
 

@@ -9,6 +9,8 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import SyncPage from "./pages/SyncPage";
+import { SyncProvider } from "./sync/SyncProvider";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -20,7 +22,8 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 
 export default function App() {
   return (
-    <Routes>
+    <SyncProvider>
+      <Routes>
       <Route path="/" element={<Navigate to="/tableau-de-bord" replace />} />
       <Route path="/connexion" element={<LoginPage />} />
       <Route path="/inscription" element={<RegisterPage />} />
@@ -69,7 +72,17 @@ export default function App() {
           </RequireAuth>
         }
       />
+      {/* Phase 6 — suivi de la file hors ligne (MVP-009) */}
+      <Route
+        path="/synchronisation"
+        element={
+          <RequireAuth>
+            <SyncPage />
+          </RequireAuth>
+        }
+      />
       <Route path="*" element={<Navigate to="/connexion" replace />} />
-    </Routes>
+      </Routes>
+    </SyncProvider>
   );
 }

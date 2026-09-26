@@ -9,6 +9,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider } from "../../auth/AuthContext";
+import { SyncProvider } from "../../sync/SyncProvider";
 import ProjectDetailPage from "../ProjectDetailPage";
 
 const OWNER = {
@@ -252,9 +253,11 @@ function renderPage() {
   return render(
     <MemoryRouter initialEntries={["/projets/12"]}>
       <AuthProvider>
+        <SyncProvider>
         <Routes>
           <Route path="/projets/:id" element={<ProjectDetailPage />} />
         </Routes>
+        </SyncProvider>
       </AuthProvider>
     </MemoryRouter>,
   );

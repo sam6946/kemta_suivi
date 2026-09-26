@@ -220,7 +220,7 @@ requêtes (`test_schedule_has_no_n_plus_one`).
 | `GET` | `/api/evidences/{id}/file/` | fichier d'origine, accès contrôlé par appartenance au projet |
 | `GET` | `/api/evidences/{id}/thumbnail/` | miniature (WebP, JPEG de repli) — retombe sur l'original tant qu'elle n'est pas prête |
 | `GET` | `/api/evidences/pending/` | file d'attente du validateur, tous projets confondus ; `?older_than_hours=` |
-| `POST` | `/api/sync/batch/` | **Phase 6 (MVP-009)** : reprise de synchronisation par lot, mêmes clés d'idempotence |
+| `POST` | `/api/sync/batch/` | **Phase 6 (MVP-009)** : reprise de synchronisation par lot, mêmes clés d'idempotence (voir §6.1) |
 
 **Création** : `201` avec `status=PENDING`, `sync_status=SYNCED`, `hash_sha256` (empreinte du
 fichier **reçu**, recalculée côté serveur) et `distance_from_site_m` / `inside_geofence` quand le
@@ -249,6 +249,51 @@ derrière un proxy. Les réponses sont `Cache-Control: private` (jamais de cache
 | `invalid_transition` | 409 | action incompatible avec le statut courant (`details.allowed_actions`) |
 | `cannot_validate_own_evidence` | 403 | un acteur ne valide pas sa propre preuve (sauf administrateur plateforme) |
 | `invalid_status` | 400 | filtre `status` inconnu |
+
+### 6.1 Synchronisation hors ligne (Phase 6 — MVP-009)
+
+| Méthode | Endpoint | Notes |
+|---|---|---|
+| `POST` | `/api/sync/batch/` | rejeu d'un lot d'opérations **sans fichier** (50 maximum), chacune avec sa clé d'idempotence |
+| `GET` | `/api/sync/status/` | ce que le serveur sait de la synchronisation : types acceptés, opérations appliquées, verrous en cours |
+| `POST` | `/api/sync/operations/{key}/forget/` | libère une clé restée `IN_PROGRESS` (appareil disparu en plein envoi) |
+
+Requête :
+```json
+{ "operations": [
+  { "op_id": "uuid client", "type": "TASK_UPDATE", "idempotency_key": "uuid client",
+    "payload": { "task": 12, "progress": "60.00" } }
+] }
+```
+
+Réponse `200` : un résultat **par opération**, jamais un échec global — un lot partiel est normal
+et attendu au retour du réseau.
+
+| `status` | Sens | Ce que fait le client |
+|---|---|---|
+| `SYNCED` | appliquée (ou **rejouée** : `replayed: true`) | retire l'opération de la file |
+| `CONFLICT` | l'état serveur ne permet pas l'opération telle quelle (`permission_denied`, `invalid_transition`, `comment_required`, `cannot_validate_own_evidence`, `not_found`, `op_in_progress`, `idempotency_key_conflict`) | garde l'opération, montre le motif, laisse l'utilisateur décider |
+| `FAILED` | opération mal formée ou définitivement refusée (`invalid_operation_payload`, `validation_error`, `unsupported_operation`, `operation_requires_file`) | idem, avec relance manuelle possible |
+
+`payload` attendu par type d'opération :
+
+| `type` | `payload` |
+|---|---|
+| `TASK_UPDATE` | `{ "task": id, …champs de la tâche (dont `status`, `progress`, dates réelles) }` |
+| `TASK_CREATE` | `{ "project": id, …champs de la tâche }` |
+| `MILESTONE_UPDATE` | `{ "milestone": id, …champs du jalon }` |
+| `MILESTONE_CREATE` | `{ "project": id, …champs du jalon }` |
+| `EVIDENCE_TRANSITION` | `{ "evidence": id, "action": "VALIDATE"\|"REJECT"\|"FLAG"\|"REOPEN", "comment": "…" }` |
+
+Règles :
+- une clé déjà appliquée est **rejouée** (même réponse, aucun second effet) ; une clé en cours de
+  traitement renvoie `op_in_progress` ; une clé réutilisée pour un autre type renvoie
+  `idempotency_key_conflict` ;
+- les opérations sont **isolées** : le refus de l'une n'annule pas les autres ;
+- les **fichiers ne passent pas par le lot** : une photo part sur `POST /api/evidences/` avec sa
+  clé (une opération `EVIDENCE_UPLOAD` dans un lot est refusée avec `operation_requires_file`) ;
+- au-delà de 50 opérations ou en présence de deux clés identiques, le lot entier est refusé
+  (`400`), car son résultat serait ambigu.
 
 **Machine à états** : `PENDING → {VALIDATED, REJECTED, FLAGGED}` ·
 `VALIDATED → {FLAGGED, REJECTED, REOPEN}` · `REJECTED → {REOPEN, VALIDATE}` ·

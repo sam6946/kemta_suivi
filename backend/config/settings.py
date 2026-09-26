@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "apps.organizations",
     "apps.projects",
     "apps.evidences",
+    "apps.sync",
 ]
 
 MIDDLEWARE = [

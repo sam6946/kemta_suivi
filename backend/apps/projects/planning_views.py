@@ -39,6 +39,12 @@ from apps.projects.serializers import (
     MilestoneWithTasksSerializer,
     TaskSerializer,
 )
+from apps.projects.services import (
+    create_milestone,
+    create_task,
+    update_milestone,
+    update_task,
+)
 from apps.users.roles import Capability
 
 TASK_ORDERING_FIELDS = {
@@ -55,12 +61,6 @@ TASK_ORDERING_FIELDS = {
     "progress",
     "-progress",
 }
-
-# Champs qu'un membre sans `MANAGE_SCHEDULE` mais avec `UPDATE_TASK` peut modifier sur la
-# tâche dont il est responsable : l'exécution terrain, pas la planification.
-FIELD_UPDATE_FIELDS = frozenset(
-    {"status", "progress", "actual_start_date", "actual_end_date", "description"}
-)
 
 
 def accessible_tasks(user):
@@ -100,32 +100,11 @@ class MilestoneListCreateView(PlanningBaseView):
     @transaction.atomic
     def post(self, request, pk):
         project = self.get_project(request, pk)
-        self.require_schedule(
-            request, project, "Vous n'avez pas la permission de planifier ce projet."
+        milestone, progress = create_milestone(
+            project=project, actor=request.user, data=request.data, request=request
         )
-        serializer = MilestoneSerializer(
-            data=request.data, context={"request": request, "project": project}
-        )
-        serializer.is_valid(raise_exception=True)
-        milestone = serializer.save(project=project, created_by=request.user)
-        recalculate_project_progress(project)
-        log_event(
-            "MILESTONE_CREATED",
-            actor=request.user,
-            entity_type="Milestone",
-            entity_id=milestone.pk,
-            organization=project.organization,
-            project=project,
-            metadata={
-                "title": milestone.title,
-                "status": milestone.status,
-                "planned_date": str(milestone.planned_date) if milestone.planned_date else None,
-                "weight": str(milestone.weight),
-            },
-            request=request,
-        )
-        data = serializer.data
-        data["project_progress"] = float(project.progress)
+        data = MilestoneSerializer(milestone, context={"request": request}).data
+        data["project_progress"] = float(progress)
         return Response(data, status=status.HTTP_201_CREATED)
 
 
@@ -142,37 +121,10 @@ class MilestoneDetailView(PlanningBaseView):
     @transaction.atomic
     def patch(self, request, pk):
         milestone = self.get_milestone(request, pk)
-        self.require_schedule(
-            request,
-            milestone.project,
-            "Vous n'avez pas la permission de modifier ce jalon.",
+        milestone, progress = update_milestone(
+            milestone=milestone, actor=request.user, data=request.data, request=request
         )
-        before = {"status": milestone.status, "planned_date": str(milestone.planned_date or "")}
-        serializer = MilestoneSerializer(
-            milestone,
-            data=request.data,
-            partial=True,
-            context={"request": request, "project": milestone.project},
-        )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        progress = recalculate_project_progress(milestone.project)
-        changed = {
-            field: {"old": before[field], "new": str(getattr(milestone, field) or "")}
-            for field in before
-            if before[field] != str(getattr(milestone, field) or "")
-        }
-        log_event(
-            "MILESTONE_UPDATED",
-            actor=request.user,
-            entity_type="Milestone",
-            entity_id=milestone.pk,
-            organization=milestone.project.organization,
-            project=milestone.project,
-            metadata={"changed": changed, "project_progress": str(progress)},
-            request=request,
-        )
-        data = serializer.data
+        data = MilestoneSerializer(milestone, context={"request": request}).data
         data["project_progress"] = float(progress)
         return Response(data)
 
@@ -254,34 +206,11 @@ class TaskListCreateView(PlanningBaseView):
     @transaction.atomic
     def post(self, request, pk):
         project = self.get_project(request, pk)
-        self.require_schedule(
-            request, project, "Vous n'avez pas la permission de créer une tâche sur ce projet."
+        task, progress = create_task(
+            project=project, actor=request.user, data=request.data, request=request
         )
-        serializer = TaskSerializer(
-            data=request.data, context={"request": request, "project": project}
-        )
-        serializer.is_valid(raise_exception=True)
-        task = serializer.save(project=project, created_by=request.user)
-        project_progress = recalculate_project_progress(project)
-        log_event(
-            "TASK_CREATED",
-            actor=request.user,
-            entity_type="Task",
-            entity_id=task.pk,
-            organization=project.organization,
-            project=project,
-            metadata={
-                "title": task.title,
-                "status": task.status,
-                "milestone": task.milestone_id,
-                "assignee": task.assignee_id,
-                "planned_end_date": str(task.planned_end_date) if task.planned_end_date else None,
-                "project_progress": str(project_progress),
-            },
-            request=request,
-        )
-        data = serializer.data
-        data["project_progress"] = float(project_progress)
+        data = TaskSerializer(task, context={"request": request, "project": project}).data
+        data["project_progress"] = float(progress)
         return Response(data, status=status.HTTP_201_CREATED)
 
 
@@ -303,64 +232,12 @@ class TaskDetailView(APIView):
     @transaction.atomic
     def patch(self, request, pk):
         task = self.get_task(request, pk)
-        fields = set(request.data.keys())
-        is_assignee = task.assignee_id == request.user.pk
-        self._authorize(request, task, fields, is_assignee)
-
-        before = {
-            "status": task.status,
-            "progress": str(task.progress),
-            "planned_end_date": str(task.planned_end_date or ""),
-            "milestone": task.milestone_id,
-        }
-        serializer = TaskSerializer(
-            task,
-            data=request.data,
-            partial=True,
-            context={"request": request, "project": task.project},
+        task, project_progress = update_task(
+            task=task, actor=request.user, data=request.data, request=request
         )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        project_progress = recalculate_project_progress(task.project)
-
-        changed = {
-            field: {"old": before[field], "new": str(getattr(task, field) or "")}
-            for field in ("status", "progress", "planned_end_date")
-            if before[field] != str(getattr(task, field) or "")
-        }
-        if before["milestone"] != task.milestone_id:
-            changed["milestone"] = {"old": before["milestone"], "new": task.milestone_id}
-        log_event(
-            "TASK_STATUS_CHANGED" if "status" in changed else "TASK_UPDATED",
-            actor=request.user,
-            entity_type="Task",
-            entity_id=task.pk,
-            organization=task.project.organization,
-            project=task.project,
-            metadata={
-                "title": task.title,
-                "changed": changed,
-                "project_progress": str(project_progress),
-            },
-            request=request,
-        )
-        data = serializer.data
+        data = TaskSerializer(task, context={"request": request, "project": task.project}).data
         data["project_progress"] = float(project_progress)
         return Response(data)
-
-    def _authorize(self, request, task: Task, fields: set[str], is_assignee: bool) -> None:
-        if has_project_capability(request.user, task.project, Capability.MANAGE_SCHEDULE):
-            return
-        may_update = has_project_capability(
-            request.user, task.project, Capability.UPDATE_TASK
-        ) and (is_assignee or task.assignee_id is None)
-        if may_update and fields <= FIELD_UPDATE_FIELDS:
-            return
-        raise KemtaAPIError(
-            "permission_denied",
-            "Vous n'avez pas la permission de modifier cette tâche.",
-            http_status=403,
-        )
 
     @transaction.atomic
     def delete(self, request, pk):

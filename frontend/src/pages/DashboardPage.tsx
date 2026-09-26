@@ -14,6 +14,7 @@ import { organizationsApi } from "../api/organizations";
 import { projectsApi } from "../api/projects";
 import { useAuth } from "../auth/AuthContext";
 import { messageForErrorCode } from "../auth/passwordPolicy";
+import SyncBadge from "../components/SyncBadge";
 import { Alert, Button, Field } from "../components/ui";
 
 export default function DashboardPage() {
@@ -88,7 +89,11 @@ export default function DashboardPage() {
       </header>
 
       <section className="card">
-        <h1>Bonjour {user.first_name}</h1>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <h1 style={{ margin: 0 }}>Bonjour {user.first_name}</h1>
+          {/* Phase 6 — l'état de la file hors ligne est visible dès l'ouverture de l'application. */}
+          <SyncBadge />
+        </div>
         <p className="subtitle">
           {user.phone_masked} · {user.is_phone_verified ? "téléphone vérifié" : "téléphone non vérifié"}
         </p>

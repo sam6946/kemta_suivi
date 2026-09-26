@@ -33,11 +33,10 @@ from rest_framework.views import APIView
 
 from apps.core.activity import log_event
 from apps.core.exceptions import KemtaAPIError
+from apps.evidences.access import accessible_evidences
 from apps.evidences.models import (
-    ACTIONS_REQUIRING_COMMENT,
     Evidence,
     EvidenceStatus,
-    EvidenceValidation,
     SyncStatus,
 )
 from apps.evidences.serializers import (
@@ -47,13 +46,10 @@ from apps.evidences.serializers import (
     EvidenceValidationSerializer,
     distance_meters,
 )
+from apps.evidences.services import apply_transition
 from apps.evidences.storage import read_and_validate_upload, sha256_of
 from apps.evidences.tasks import generate_evidence_derivatives
-from apps.projects.access import (
-    accessible_projects,
-    has_project_capability,
-    is_platform_admin,
-)
+from apps.projects.access import accessible_projects, has_project_capability
 from apps.projects.models import Task
 from apps.users.roles import Capability
 
@@ -62,13 +58,6 @@ EXTENSION_BY_CONTENT_TYPE = {
     "image/png": "png",
     "image/webp": "webp",
 }
-
-
-def accessible_evidences(user):
-    """Preuves visibles : celles des projets accessibles (règle unique de périmètre)."""
-    return Evidence.objects.filter(project__in=accessible_projects(user)).select_related(
-        "project", "author", "task"
-    )
 
 
 def serialize(evidence: Evidence, request) -> dict:
@@ -326,7 +315,11 @@ class EvidenceHistoryView(APIView):
 
 
 class EvidenceTransitionView(APIView):
-    """`POST /api/evidences/{id}/transition/` — valider, rejeter, signaler, rouvrir."""
+    """`POST /api/evidences/{id}/transition/` — valider, rejeter, signaler, rouvrir.
+
+    La règle métier vit dans `apps.evidences.services.apply_transition` : le même service sert
+    la reprise hors ligne (`/api/sync/batch/`), donc aucune divergence possible entre les deux.
+    """
 
     permission_classes = [IsAuthenticated]
 
@@ -338,82 +331,14 @@ class EvidenceTransitionView(APIView):
             ),
             pk=pk,
         )
-        if not has_project_capability(request.user, evidence.project, Capability.VALIDATE_EVIDENCE):
-            raise KemtaAPIError(
-                "permission_denied",
-                "Vous n'avez pas la permission de valider les preuves de ce projet.",
-                http_status=403,
-            )
-
-        # Anti-fraude : on ne valide pas sa propre preuve (l'administration plateforme excepte).
-        if evidence.author_id == request.user.pk and not is_platform_admin(request.user):
-            raise KemtaAPIError(
-                "cannot_validate_own_evidence",
-                "Vous ne pouvez pas valider ou rejeter votre propre preuve : "
-                "un autre validateur doit statuer.",
-                http_status=403,
-            )
-
         serializer = EvidenceTransitionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        action = serializer.validated_data["action"]
-        comment = (serializer.validated_data.get("comment") or "").strip()
 
-        if action in ACTIONS_REQUIRING_COMMENT and not comment:
-            raise KemtaAPIError(
-                "comment_required",
-                "Un commentaire est obligatoire pour un rejet ou un signalement.",
-                details={"action": action},
-            )
-
-        next_status = EvidenceValidation.next_status(evidence.status, action)
-        if next_status is None:
-            raise KemtaAPIError(
-                "invalid_transition",
-                f"Action « {action} » impossible depuis le statut "
-                f"« {evidence.get_status_display()} ».",
-                http_status=409,
-                details={
-                    "from_status": evidence.status,
-                    "action": action,
-                    "allowed_actions": sorted(
-                        EvidenceValidation.next_status(evidence.status, candidate) and candidate
-                        for candidate in ("VALIDATE", "REJECT", "FLAG", "REOPEN")
-                        if EvidenceValidation.next_status(evidence.status, candidate)
-                    ),
-                },
-            )
-
-        previous_status = evidence.status
-        EvidenceValidation.objects.create(
+        apply_transition(
             evidence=evidence,
             actor=request.user,
-            action=action,
-            from_status=previous_status,
-            to_status=next_status,
-            comment=comment,
-        )
-        evidence.status = next_status
-        evidence.save(update_fields=["status", "updated_at"])
-
-        log_event(
-            {
-                "VALIDATE": "EVIDENCE_VALIDATED",
-                "REJECT": "EVIDENCE_REJECTED",
-                "FLAG": "EVIDENCE_FLAGGED",
-                "REOPEN": "EVIDENCE_REOPENED",
-            }[action],
-            actor=request.user,
-            entity_type="Evidence",
-            entity_id=evidence.pk,
-            organization=evidence.project.organization,
-            project=evidence.project,
-            metadata={
-                "from_status": previous_status,
-                "to_status": next_status,
-                "comment": comment[:280],
-                "author_id": evidence.author_id,
-            },
+            action=serializer.validated_data["action"],
+            comment=serializer.validated_data.get("comment") or "",
             request=request,
         )
 

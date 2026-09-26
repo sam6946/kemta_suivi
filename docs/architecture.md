@@ -36,7 +36,7 @@
 | Base | PostgreSQL 16 | contraintes d'unicité partielle, `select_for_update`, JSONB |
 | Cache / broker | Redis 7 | un seul composant pour cache, rate limiting et Celery |
 | Async | Celery (worker + beat) | médias, SMS, notifications, purge OTP |
-| Frontend | React 18 + TypeScript + Vite, PWA | offline-first, code splitting |
+| Frontend | React 18 + TypeScript + Vite, PWA | offline-first (`idb` : file IndexedDB + binaire des photos), code splitting |
 | API | REST JSON (pas de GraphQL) | simplicité, cache HTTP, contrôle fin des permissions |
 | Auth | JWT (access 15 min + refresh 7 j rotatif) + OTP SMS | conforme aux flux du backlog |
 
@@ -102,7 +102,20 @@ adaptateur console → les tests tournent sans infrastructure externe.
 - **Erreurs** : handler DRF unique → enveloppe d'erreur + `request_id` ; exception non gérée →
   `500` générique + log `ERROR` avec `request_id` (aucune donnée sensible dans la réponse).
 
-## 6. Sécurité (exigences transverses)
+## 6. Hors ligne (phase 6)
+
+- La file d'opérations et les photos en attente vivent dans **IndexedDB** (`idb`), avec un repli
+  mémoire si le navigateur refuse le stockage persistant — l'écran de suivi l'annonce alors
+  explicitement au lieu de laisser croire à une sauvegarde.
+- Le binaire des photos est stocké en `ArrayBuffer` (et non en `Blob`) : c'est la forme la plus
+  universellement clonable par IndexedDB ; il est reconstruit en `Blob` à l'envoi.
+- Aucune donnée du serveur n'est mise en cache pour l'instant : le cache de lecture (SWR) arrive
+  avec le dashboard agrégé (phase 8). Ce qui est stocké localement est **exactement** ce qui doit
+  être rejoué.
+- Toute écriture rejouable porte une clé d'idempotence ; le serveur tient le registre
+  (`SyncOperation`) et rejoue la réponse d'origine plutôt que de réappliquer l'opération.
+
+## 7. Sécurité (exigences transverses)
 
 - Secrets uniquement par variables d'environnement ; `.env.example` documenté, `.env` ignoré.
 - Cookies de refresh : `HttpOnly`, `Secure`, `SameSite=Strict` en production ; access token en
@@ -114,7 +127,7 @@ adaptateur console → les tests tournent sans infrastructure externe.
   production ; `DEBUG=False` obligatoire en production (assertion au démarrage).
 - Dépendances : `pip-audit`/`npm audit` en CI, blocage sur vulnérabilité haute.
 
-## 7. Décisions d'architecture (ADR)
+## 8. Décisions d'architecture (ADR)
 
 | # | Décision | Statut | Responsable | Échéance |
 |---|---|---|---|---|
@@ -127,12 +140,12 @@ adaptateur console → les tests tournent sans infrastructure externe.
 | ADR-007 | Procédure « numéro perdu / changement de SIM » | **Ouverte** | Produit | avant Phase 2 |
 | ADR-008 | SSE/WebSocket pour le temps réel (post-MVP) | Reportée | Tech | post-MVP |
 
-## 8. Arborescence cible
+## 9. Arborescence cible
 
 ```
 backend/     config/ (settings, urls, celery, asgi/wsgi) · apps/ (users, projects, evidence,
              finance, core) · requirements*.txt · manage.py · pytest.ini
-frontend/    src/ (api, auth, features/, offline/, components/, pages/) · vite.config.ts
+frontend/    src/ (api, auth, components, pages, lib (file hors ligne `db.ts`/`outbox.ts`), sync/) · vite.config.ts
 infra/       docker-compose*.yml · nginx/ · Dockerfile.*
 docs/        BACKLOG_MVP.md · architecture.md · data-model.md · rbac-matrix.md ·
              api-contract.md · offline-sync.md · test-plan.md · flows/authentication.md

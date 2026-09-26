@@ -93,9 +93,22 @@ Règles :
 - **Messages** : chaque refus serveur (`duplicate_evidence`, `evidence_out_of_geofence`,
   `cannot_validate_own_evidence`, hors ligne) a un message métier dédié — jamais un code brut.
 
-## 7. Ce qui reste pour la phase 6 (MVP-009)
+## 7. Suite hors ligne (phase 6 — MVP-009, implémenté)
 
-La file offline (IndexedDB + `POST /api/sync/batch/`) s'appuie sur ce qui est déjà en place :
-clé d'idempotence obligatoire, empreinte calculée avant envoi, `sync_status` et renvoi de la
-preuve existante en cas de doublon. Aucun changement de contrat n'est nécessaire pour rejouer un
-lot de captures — voir `docs/offline-sync.md`.
+La file locale (`frontend/src/lib/outbox.ts` + `src/lib/db.ts`) reprend exactement ce socle :
+
+1. une capture sans réseau (ou dont l'envoi échoue) est **écrite dans IndexedDB** avec sa clé
+   d'idempotence, le binaire de la photo (`ArrayBuffer`), les métadonnées et le statut local
+   `PENDING` — elle apparaît immédiatement dans la galerie du chantier sous forme de carte
+   locale ;
+2. la reprise est **automatique** : au démarrage de l'application, sur l'événement `online`, au
+   retour de l'onglet et après chaque mise en file (bouton « Synchroniser maintenant » en secours) ;
+3. les photos repartent **une par une** sur `POST /api/evidences/` avec **la même** clé, donc
+   jamais deux fois ; un doublon détecté par empreinte est traité comme un succès sans second
+   envoi ;
+4. les opérations sans fichier (décisions de validation, mises à jour de tâche ou de jalon)
+   voyagent en lot sur `POST /api/sync/batch/` — voir `docs/api-contract.md` §6.1 ;
+5. les refus sont classés `CONFLICT` (décision humaine) ou `FAILED` (nouvel essai avec délai
+   croissant), et restent visibles sur l'écran `/synchronisation`.
+
+Le détail de la stratégie (statuts, conflits, cache) est dans `docs/offline-sync.md`.

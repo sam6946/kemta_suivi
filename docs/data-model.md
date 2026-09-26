@@ -173,6 +173,24 @@ FLAGGED}`, `VALIDATED → {FLAGGED, REJECTED, PENDING}`, `REJECTED → {PENDING,
 `FLAGGED → {PENDING, VALIDATED, REJECTED}`. Un acteur ne valide jamais sa propre preuve
 (`cannot_validate_own_evidence`, sauf administrateur plateforme).
 
+### `SyncOperation` (Phase 6 — MVP-009)
+`user` · `idempotency_key` · `operation_type` · `status` (`IN_PROGRESS` / `DONE`) · `http_status`
+· `entity_type` · `entity_id` · `response_body` · `created_at` · `updated_at`.
+
+Registre d'idempotence du lot de synchronisation : `unique(user, idempotency_key)`. Une clé `DONE`
+est rejouée avec sa réponse d'origine (marquée `replayed: true`) ; une clé `IN_PROGRESS` renvoie
+`409 op_in_progress` ; une clé utilisée pour un autre type d'opération renvoie
+`409 idempotency_key_conflict`. Les refus métier libèrent la clé (l'utilisateur peut corriger et
+relancer) : le registre ne garde donc trace que de ce qui a réellement été appliqué. Aucune donnée
+métier n'y est dupliquée — seulement de quoi identifier l'entité touchée.
+
+Côté appareil (jamais en base), la file locale `outbox` (IndexedDB) porte la même clé
+`idempotencyKey`, le binaire de la photo (en `ArrayBuffer`), les métadonnées, le statut local
+(`PENDING` / `UPLOADING` / `SYNCED` / `FAILED` / `CONFLICT`), le nombre d'essais et l'échéance du
+prochain essai (retry exponentiel).
+
+---
+
 ## 5. Finances (Phase 7)
 
 ### `BudgetLine`

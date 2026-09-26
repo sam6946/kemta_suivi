@@ -22,6 +22,7 @@ import {
 } from "../api/evidences";
 import type { Project } from "../api/projects";
 import { messageForErrorCode } from "../auth/passwordPolicy";
+import SyncBadge from "../components/SyncBadge";
 import { Alert, Button, Field } from "../components/ui";
 import { formatDate } from "../lib/format";
 import {
@@ -33,6 +34,10 @@ import {
   preparePhoto,
   type GeoResult,
 } from "../lib/media";
+import { enqueue, listPendingEvidence, retryOperation, subscribe } from "../lib/outbox";
+import { isOnline } from "../lib/outbox";
+import { OUTBOX_STATUS_LABELS, type OutboxOperation } from "../lib/outboxTypes";
+import { useSync } from "../sync/SyncProvider";
 
 type Props = {
   project: Project;
@@ -67,8 +72,11 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
     previewUrl: string;
   } | null>(null);
   const [preparing, setPreparing] = useState(false);
+  // Preuves encore sur l'appareil (file d'attente hors ligne, MVP-009).
+  const [localOperations, setLocalOperations] = useState<OutboxOperation[]>([]);
   const idempotencyRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { online, syncNow } = useSync();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,6 +100,19 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadLocal = useCallback(async () => {
+    setLocalOperations(await listPendingEvidence(project.id));
+  }, [project.id]);
+
+  useEffect(() => {
+    // La galerie locale suit la file : dès qu'une preuve part, elle devient une carte serveur.
+    void loadLocal();
+    return subscribe(() => {
+      void loadLocal();
+      void load();
+    });
+  }, [loadLocal, load]);
 
   async function onFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -129,10 +150,58 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
     }
   }
 
+  /** Met la capture en file locale : la photo ne dépend plus du réseau (MVP-009). */
+  async function saveOffline(options: { reason: string }) {
+    if (!prepared) return;
+    const device = deviceInfo();
+    const operation = await enqueue({
+      type: "EVIDENCE_UPLOAD",
+      projectId: project.id,
+      label: description ? `Preuve · ${description}` : "Preuve terrain",
+      idempotencyKey: idempotencyRef.current ?? newIdempotencyKey(),
+      payload: {
+        captured_at: capturedAtNow(),
+        latitude: geo?.latitude ?? null,
+        longitude: geo?.longitude ?? null,
+        gps_accuracy: geo?.accuracy ?? null,
+        gps_status: geo?.status ?? "UNAVAILABLE",
+        device_model: device.device_model,
+        device_platform: device.device_platform,
+        app_version: APP_VERSION,
+        description,
+      },
+      file: prepared.blob,
+      fileMeta: {
+        name: `preuve-${project.id}.jpg`,
+        type: prepared.blob.type || "image/jpeg",
+        hash: prepared.hash,
+        width: prepared.width,
+        height: prepared.height,
+        bytes: prepared.compressedBytes,
+        originalBytes: prepared.originalBytes,
+      },
+    });
+    setFeedback(
+      `${options.reason} La preuve est conservée sur l'appareil (${formatBytes(
+        prepared.compressedBytes,
+      )}) et partira automatiquement dès que le réseau reviendra.`,
+    );
+    resetCapture();
+    await loadLocal();
+    if (isOnline()) void syncNow();
+    return operation;
+  }
+
   async function upload(event: React.FormEvent) {
     event.preventDefault();
     if (!prepared || busy) return;
     if (!idempotencyRef.current) idempotencyRef.current = newIdempotencyKey();
+
+    // Hors ligne : inutile d'attendre un échec réseau, on met directement en file.
+    if (!online) {
+      await saveOffline({ reason: "Aucune connexion pour le moment." });
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -165,12 +234,14 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
       await onChanged?.();
       setSelected(created);
     } catch (caught) {
-      if (caught instanceof ApiError) {
+      if (caught instanceof ApiError && caught.isOffline) {
+        // Coupure pendant l'envoi : la même clé d'idempotence est conservée dans la file.
+        await saveOffline({ reason: "La connexion a été coupée pendant l'envoi." });
+      } else if (caught instanceof ApiError) {
         setError(describeUploadError(caught));
       } else {
         setError(messageForErrorCode("server_error"));
       }
-      // En cas de coupure réseau, la clé d'idempotence est conservée : réessayer ne duplique pas.
     } finally {
       setBusy(false);
     }
@@ -182,6 +253,13 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
     setGeo(null);
     idempotencyRef.current = null;
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleLocalRetry(opId: string) {
+    await retryOperation(opId);
+    setFeedback("Preuve remise en file : nouvel essai en cours.");
+    await syncNow();
+    await loadLocal();
   }
 
   async function openDetail(evidence: Evidence) {
@@ -237,7 +315,12 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
 
   return (
     <section className="card" data-testid="evidences">
-      <h2 style={{ fontSize: "1rem", marginTop: 0 }}>Preuves terrain ({counts.pending + counts.validated + counts.rejected + counts.flagged})</h2>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: "1rem", margin: 0 }}>
+          Preuves terrain ({counts.pending + counts.validated + counts.rejected + counts.flagged})
+        </h2>
+        <SyncBadge />
+      </div>
 
       {error ? <Alert tone="error">{error}</Alert> : null}
       {feedback ? <Alert tone="success">{feedback}</Alert> : null}
@@ -297,13 +380,27 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
           </div>
 
           <p className="field-hint">
-            En cas de coupure réseau, la même tentative est renvoyée avec la même clé : la preuve
-            ne sera pas dupliquée.
+            {online
+              ? "En cas de coupure réseau, la preuve est gardée sur l'appareil et renvoyée " +
+                "automatiquement avec la même clé : aucun doublon."
+              : "Hors ligne : la preuve sera conservée sur l'appareil et envoyée automatiquement " +
+                "au retour du réseau."}
           </p>
 
-          <Button type="submit" loading={busy} disabled={!prepared}>
-            Envoyer la preuve
-          </Button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button type="submit" loading={busy} disabled={!prepared} data-testid="capture-submit">
+              Envoyer la preuve
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={!prepared}
+              onClick={() => void saveOffline({ reason: "Enregistrement local demandé." })}
+              data-testid="capture-offline"
+            >
+              Enregistrer hors ligne
+            </Button>
+          </div>
         </form>
       ) : (
         <Alert tone="info">
@@ -335,6 +432,43 @@ export default function ProjectEvidences({ project, onChanged }: Props) {
           Aucune preuve pour ce filtre. Les photos apparaissent ici dès leur dépôt, avec leur
           statut réel.
         </p>
+      ) : null}
+
+      {localOperations.length > 0 ? (
+        <div data-testid="local-evidence-list">
+          <p className="field-hint">
+            Encore sur cet appareil (elles partiront automatiquement) :{" "}
+            <button type="button" className="link-button" onClick={() => void syncNow()}>
+              Synchroniser maintenant
+            </button>
+          </p>
+          <ul className="evidence-grid">
+            {localOperations.map((operation) => (
+              <li key={operation.opId} className="evidence-local" data-testid="local-evidence">
+                <div className={`evidence-status status-info`}>{OUTBOX_STATUS_LABELS[operation.status]}</div>
+                <div className="field-hint">{operation.label}</div>
+                <div className="field-hint">
+                  {operation.fileMeta
+                    ? `${operation.fileMeta.width}×${operation.fileMeta.height} · ${formatBytes(
+                        operation.fileMeta.bytes,
+                      )}`
+                    : "sans fichier"}
+                  {operation.attempts > 0 ? ` · ${operation.attempts} essai(s)` : ""}
+                </div>
+                {operation.lastError ? (
+                  <div className="field-hint">{operation.lastError}</div>
+                ) : null}
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => void handleLocalRetry(operation.opId)}
+                >
+                  Relancer maintenant
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       <ul className="evidence-grid">
@@ -476,10 +610,7 @@ function describeUploadError(error: ApiError): string {
     case "captured_at_in_future":
       return "L'heure du téléphone est en avance : corrigez-la puis réessayez.";
     case "offline":
-      return (
-        "Pas de connexion : la photo reste sur l'écran. Réessayez depuis un point réseau — " +
-        "la même tentative ne créera pas de doublon."
-      );
+      return "Pas de connexion : la preuve est conservée sur l'appareil et partira toute seule.";
     default:
       return messageForErrorCode(error.code);
   }

@@ -1,4 +1,7 @@
 import "@testing-library/jest-dom/vitest";
+// jsdom n'implémente pas IndexedDB : la file hors ligne (MVP-009) a besoin d'un moteur réel
+// en test — c'est aussi ce qui garantit que l'implémentation utilisée en production fonctionne.
+import "fake-indexeddb/auto";
 
 // `crypto.randomUUID` n'existe pas dans toutes les versions de jsdom utilisées en CI.
 if (!globalThis.crypto?.randomUUID) {

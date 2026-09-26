@@ -5,8 +5,12 @@
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetLocalStorageForTests } from "../../lib/db";
+import { listOperations } from "../../lib/outbox";
+import { SyncProvider } from "../../sync/SyncProvider";
 import ProjectEvidences from "../ProjectEvidences";
 
 const PROJECT = {
@@ -243,12 +247,30 @@ function openFirstCard(section: HTMLElement): HTMLElement {
 }
 
 function renderPage(project: typeof PROJECT) {
-  return render(<ProjectEvidences project={project} />);
+  // La capture et la galerie locale s'appuient sur la file hors ligne (MVP-009).
+  return render(
+    <MemoryRouter>
+      <SyncProvider>
+        <ProjectEvidences project={project} />
+      </SyncProvider>
+    </MemoryRouter>,
+  );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   stubBrowserImageApis();
+  await resetLocalStorageForTests();
+  Object.defineProperty(globalThis.navigator, "onLine", { value: true, configurable: true });
 });
+
+/** Téléverse une photo prête à envoyer et attend l'aperçu. */
+async function pickPhoto(user: ReturnType<typeof userEvent.setup>) {
+  await user.upload(
+    screen.getByLabelText(/photo du chantier/i),
+    new File([new Uint8Array([4, 4, 4])], "photo.jpg", { type: "image/jpeg" }),
+  );
+  await screen.findByTestId("capture-preview");
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -278,6 +300,8 @@ describe("ProjectEvidences", () => {
     renderPage(project);
 
     const section = await screen.findByTestId("evidences");
+    // La galerie se remplit après l'appel réseau : on attend la première carte.
+    await within(section).findAllByTestId("evidence-card");
     expect(within(section).getByText("En attente de validation")).toBeInTheDocument();
     expect(within(section).getByText("Validée")).toBeInTheDocument();
     // Deux preuves en attente/validée : les compteurs viennent du backend.
@@ -544,6 +568,92 @@ describe("ProjectEvidences", () => {
       expect(
         calls.some((call) => call.url === "/api/projects/12/evidences/?status=PENDING"),
       ).toBe(true);
+    });
+  });
+
+  describe("capture hors ligne (MVP-009)", () => {
+    it("garde la preuve sur l'appareil quand il n'y a pas de réseau", async () => {
+      const user = userEvent.setup();
+      const { calls, project } = mockApi({ items: [] });
+      Object.defineProperty(globalThis.navigator, "onLine", { value: false, configurable: true });
+      renderPage(project);
+
+      await screen.findByTestId("empty-gallery");
+      await pickPhoto(user);
+      await user.click(screen.getByTestId("capture-submit"));
+
+      // Aucun appel réseau : la preuve attend sur l'appareil.
+      expect(calls.some((call) => call.init?.method === "POST")).toBe(false);
+      expect(await screen.findByTestId("local-evidence")).toBeInTheDocument();
+      expect((await screen.findAllByText(/conservée sur l'appareil/i)).length).toBeGreaterThan(0);
+
+      const [operation] = await listOperations();
+      expect(operation.type).toBe("EVIDENCE_UPLOAD");
+      expect(operation.status).toBe("PENDING");
+      expect(operation.fileMeta?.hash).toHaveLength(64);
+      expect(operation.payload.gps_status).toBe("UNAVAILABLE");
+    });
+
+    it("bascule en file locale si la connexion tombe pendant l'envoi", async () => {
+      const user = userEvent.setup();
+      const { calls, project } = mockApi({ items: [] });
+      let online = true;
+      renderPage(project);
+      await screen.findByTestId("empty-gallery");
+
+      // Le réseau disparaît entre l'aperçu et l'envoi.
+      online = false;
+      Object.defineProperty(globalThis.navigator, "onLine", { get: () => online, configurable: true });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          calls.push({ url: String(input), init });
+          if (init?.method === "POST") throw new TypeError("Failed to fetch");
+          return new Response(JSON.stringify({ count: 0, results: [], counts: {} }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }),
+      );
+
+      await pickPhoto(user);
+      await user.click(screen.getByTestId("capture-submit"));
+
+      expect(await screen.findByTestId("local-evidence")).toBeInTheDocument();
+      expect((await screen.findAllByText(/connexion a été coupée/i)).length).toBeGreaterThan(0);
+      const [operation] = await listOperations();
+      expect(operation.idempotencyKey).toBeTruthy();
+    });
+
+    it("envoie la preuve mise en file dès que le réseau revient", async () => {
+      const user = userEvent.setup();
+      const { calls, project } = mockApi({ items: [] });
+      renderPage(project);
+      await screen.findByTestId("empty-gallery");
+
+      await pickPhoto(user);
+      await user.click(screen.getByTestId("capture-offline"));
+      expect(await screen.findByTestId("local-evidence")).toBeInTheDocument();
+
+      // L'écran propose une synchronisation immédiate (et le retour réseau la déclenche aussi).
+      await user.click(screen.getByRole("button", { name: /synchroniser maintenant/i }));
+
+      const [queued] = await listOperations();
+      await waitFor(() => {
+        const upload = calls.find(
+          (call) => call.url === "/api/evidences/" && call.init?.method === "POST",
+        );
+        expect(upload).toBeTruthy();
+        // La clé d'idempotence mise en file est réutilisée telle quelle : pas de doublon.
+        const headers = upload!.init!.headers as Record<string, string>;
+        expect(headers["Idempotency-Key"]).toBe(queued.idempotencyKey);
+      });
+      await waitFor(async () => {
+        const [operation] = await listOperations();
+        expect(operation.status).toBe("SYNCED");
+      });
+      // La carte locale disparaît : la preuve est désormais servie par le serveur.
+      await waitFor(() => expect(screen.queryByTestId("local-evidence")).not.toBeInTheDocument());
     });
   });
 });

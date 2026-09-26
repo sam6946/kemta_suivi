@@ -6,8 +6,9 @@ React/TypeScript/Vite.
 
 **Avancement actuel : phases 0 (cadrage), 1 (fondations), 2 (authentification, RBAC et
 réinitialisation du mot de passe), 3 (organisations, projets, membres), 4 (jalons, tâches,
-planning) et 5 (preuves terrain : capture, validation, historique) livrées et testées.**
-Suite : offline (phase 6), finances (phase 7), dashboard agrégé (phase 8).
+planning), 5 (preuves terrain : capture, validation, historique) et 6 (offline-first :
+file locale, synchronisation automatique, conflits) livrées et testées.**
+Suite : finances (phase 7), dashboard agrégé (phase 8).
 Détail : [`docs/STATUS.md`](docs/STATUS.md).
 
 ## 1. Démarrage rapide avec Docker (chemin nominal)
@@ -59,11 +60,12 @@ cd frontend && npm install && npm run dev
 ## 3. Tests
 
 ```bash
-cd backend && pytest                       # 342 tests, sans infrastructure externe
-cd backend && pytest --cov=apps            # couverture (94 %)
+cd backend && pytest                       # 368 tests, sans infrastructure externe
+cd backend && pytest --cov=apps            # couverture (95 %)
 cd backend && ruff check . && ruff format --check .    # lint + formatage
-cd frontend && npm run lint && npm test   # lint ESLint + 64 tests : mot de passe oublié, projets, membres,
-                                          # planning, preuves terrain (compression, GPS, envoi), formatage FCFA
+cd frontend && npm run lint && npm test   # lint ESLint + 94 tests : mot de passe oublié, projets, membres,
+                                          # planning, preuves terrain (compression, GPS, envoi), file hors ligne
+                                          # (persistance, retry, conflits, reprise automatique), formatage FCFA
 cd frontend && npm run build               # vérification TypeScript + build
 ```
 
@@ -137,7 +139,29 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - Écran : `/projets/{id}` → section **Preuves** (capture guidée, galerie avec statuts, détail,
   validation et historique).
 
-## 8. Documentation
+## 8. Périmètre offline-first (Phase 6)
+
+- **Le terrain n'attend jamais le réseau** : une photo capturée hors ligne est compressée,
+  empreintée puis **écrite dans IndexedDB** (binaire compris, en `ArrayBuffer`) avec sa clé
+  d'idempotence — elle survit à la fermeture de l'application.
+- **Synchronisation automatique** : reprise au démarrage, à l'événement `online`, au retour de
+  l'onglet et après chaque mise en file. Aucune action obligatoire ; un seul réveil programmé par
+  échéance, donc **aucun polling**.
+- **Idempotence de bout en bout** : la même clé est réutilisée à chaque tentative. Côté serveur,
+  `POST /api/evidences/` (fichier) et `POST /api/sync/batch/` (opérations sans fichier) renvoient
+  le résultat d'origine au lieu de réappliquer l'opération ; un doublon de photo est détecté par
+  son empreinte SHA-256.
+- **Reprise maîtrisée** : délai exponentiel `min(30 s, 1 s × 2^n)` avec gigue, plafonné à 8 essais,
+  puis relance manuelle — jamais de boucle infinie silencieuse.
+- **Conflits visibles** : permission, transition impossible, hors périmètre, élément supprimé…
+  sont classés `CONFLICT`, présentés avec leur motif, avec « Relancer » ou « Abandonner ».
+- **Suivi** : badge global (hors ligne / en attente / à vérifier) et écran `/synchronisation`
+  (compteurs, motif d'échec, essais, relance unitaire ou globale). Les preuves encore locales
+  apparaissent dans la galerie du chantier, distinctes des preuves confirmées par le serveur.
+- **Actions en ligne uniquement** (jamais mises en file en silence) : inscription, connexion, OTP
+  et **réinitialisation du mot de passe** — l'interface l'annonce et propose « Réessayer ».
+
+## 9. Documentation
 
 | Document | Contenu |
 |---|---|
@@ -146,27 +170,28 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 | [`docs/data-model.md`](docs/data-model.md) | Modèle de données cible (identité → finances → exploitation) |
 | [`docs/rbac-matrix.md`](docs/rbac-matrix.md) | 9 rôles, capacités, matrices détaillées, implémentation |
 | [`docs/api-contract.md`](docs/api-contract.md) | Contrat API : endpoints, erreurs, idempotence, rate limiting |
-| [`docs/offline-sync.md`](docs/offline-sync.md) | Stratégie offline-first, file de synchronisation, conflits, cache |
 | [`docs/test-plan.md`](docs/test-plan.md) | Plan de tests, matrice fonctionnalité → tests, seed, E2E |
 | [`docs/flows/authentication.md`](docs/flows/authentication.md) | Flux inscription / OTP / connexion / **réinitialisation du mot de passe** |
 | [`docs/flows/project.md`](docs/flows/project.md) | Flux organisation → projet → membres, règles d'accès 403/404, performance |
 | [`docs/flows/planning.md`](docs/flows/planning.md) | Flux jalons/tâches, règles de calcul d'avancement et de retard, permissions |
 | [`docs/flows/evidences.md`](docs/flows/evidences.md) | Flux preuve terrain : capture hors ligne, envoi idempotent, périmètre, validation, historique |
+| [`docs/offline-sync.md`](docs/offline-sync.md) | Stratégie offline-first : file locale, reprise, conflits, cache (implémentée en phase 6) |
 | [`docs/STATUS.md`](docs/STATUS.md) | État d'avancement phase par phase et fonctionnalité par fonctionnalité |
 
-## 9. Structure du dépôt
+## 10. Structure du dépôt
 
 ```
 backend/     config/ (settings, urls, celery) · apps/core (journal, santé, erreurs, montants) ·
              apps/users (identité, OTP, sessions, rôles) ·
              apps/organizations (organisations, membres) ·
-             apps/projects (projets, membres, règles d'accès) · apps/evidences (preuves, validations) · tests
+             apps/projects (projets, membres, règles d'accès) · apps/evidences (preuves, validations) ·
+             apps/sync (lot de synchronisation idempotent) · tests
 frontend/    src/ (api, auth, components, pages) · tests unitaires (vitest)
 docs/        cadrage Phase 0 et spécifications
 docker-compose.yml · docker-compose.prod.yml · .env.example
 ```
 
-## 10. Règles non négociables du projet
+## 11. Règles non négociables du projet
 
 1. Aucun secret dans le dépôt : uniquement des variables d'environnement (`.env.example` documenté).
 2. Aucun OTP, mot de passe ou jeton en clair — ni en base, ni dans les logs, ni dans les réponses.
