@@ -97,7 +97,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const { method = "GET", body, auth = false, idempotencyKey, retryOnUnauthorized = true } = options;
 
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  // `multipart/form-data` (preuves terrain) : le navigateur pose lui-même le Content-Type,
+  // frontière comprise — on ne doit surtout pas l'écraser.
+  const isMultipart = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isMultipart) headers["Content-Type"] = "application/json";
   if (auth && tokens.access) headers.Authorization = `Bearer ${tokens.access}`;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
@@ -106,7 +109,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     response = await fetch(`/api${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isMultipart ? (body as FormData) : JSON.stringify(body),
     });
   } catch {
     throw new ApiError("offline", "Pas de connexion. Vérifiez votre réseau puis réessayez.", 0);

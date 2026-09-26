@@ -3,7 +3,7 @@
 - Refuse de s'exécuter si `DJANGO_ENV=production` (sauf `--force`).
 - Aucune donnée n'est simulée côté produit : ces comptes servent aux démos et aux tests.
 - Organisations, projets, membres, jalons et tâches de démonstration.
-- Les preuves terrain et les lignes budgétaires seront ajoutées aux phases 5 et 7.
+- Preuves terrain de démonstration (phase 5) ; les lignes budgétaires viendront en phase 7.
 """
 
 from __future__ import annotations
@@ -131,6 +131,71 @@ PROJECTS = [
         "members": {"ENGINEER": {}, "VALIDATOR": {"can_validate_evidence": True}},
     },
 ]
+
+
+# Preuves terrain de démonstration : couleurs distinctes pour que la galerie soit lisible.
+EVIDENCES = {
+    "RBS-T1": [
+        {
+            "role": "FIELD_AGENT",
+            "description": "Ferraillage des semelles — avant coulage",
+            "days_ago": 34,
+            "color": (196, 178, 148),
+            "status": "VALIDATED",
+        },
+        {
+            "role": "FIELD_AGENT",
+            "description": "Coffrage de la dalle niveau 2",
+            "days_ago": 6,
+            "color": (150, 160, 170),
+        },
+        {
+            "role": "FIELD_AGENT",
+            "description": "Vue d'ensemble du chantier depuis la voie d'accès",
+            "days_ago": 3,
+            "color": (110, 140, 110),
+        },
+    ],
+    "AKW-T2": [
+        {
+            "role": "ENGINEER",
+            "description": "Contrôle des plans d'exécution sur site",
+            "days_ago": 20,
+            "color": (170, 170, 200),
+            "status": "VALIDATED",
+        },
+        {
+            "role": "CONTRACTOR",
+            "description": "Armatures du poteau P12",
+            "days_ago": 8,
+            "color": (188, 160, 130),
+        },
+    ],
+    "VCK-01": [
+        {
+            "role": "FIELD_AGENT",
+            "description": "Remblai compacté PK3 — contrôle de niveaux",
+            "days_ago": 5,
+            "color": (170, 150, 120),
+            "status": "REJECTED",
+        },
+        {
+            "role": "CONTRACTOR",
+            "description": "Aire de stockage des graves",
+            "days_ago": 2,
+            "color": (140, 140, 135),
+        },
+    ],
+    "REC-NKB": [
+        {
+            "role": "ENGINEER",
+            "description": "Toiture du bâtiment principal — état actuel",
+            "days_ago": 12,
+            "color": (160, 140, 120),
+            "status": "FLAGGED",
+        },
+    ],
+}
 
 
 # Planning de démonstration : offsets en jours par rapport à aujourd'hui (dates cohérentes et
@@ -462,10 +527,18 @@ class Command(BaseCommand):
             )
         )
         if not options["skip_projects"]:
-            organizations, projects, memberships, milestones, tasks = self._seed_projects()
+            (
+                organizations,
+                projects,
+                memberships,
+                milestones,
+                tasks,
+                evidences,
+            ) = self._seed_projects()
             self.stdout.write(
                 f"{organizations} organisation(s), {projects} projet(s), "
-                f"{memberships} appartenance(s), {milestones} jalon(s), {tasks} tâche(s) créés."
+                f"{memberships} appartenance(s), {milestones} jalon(s), {tasks} tâche(s), "
+                f"{evidences} preuve(s) créés."
             )
 
         if ALL_ROLES:
@@ -559,7 +632,90 @@ class Command(BaseCommand):
 
         return created_milestones, created_tasks
 
-    def _seed_projects(self) -> tuple[int, int, int, int, int]:
+    @transaction.atomic
+    def _seed_evidences(self, projects_by_code: dict) -> int:
+        """Preuves terrain de démonstration : photos générées en mémoire, jamais committées.
+
+        Les images sont fabriquées par Pillow (motifs de couleur) : aucune donnée binaire dans
+        le dépôt, et le seed reste rapide. Chaque preuve est rattachée à un membre qui possède
+        réellement la capacité de capture sur le projet.
+        """
+        import io
+        from decimal import Decimal
+
+        from django.core.files.base import ContentFile
+        from django.utils import timezone
+        from PIL import Image
+
+        from apps.evidences.models import Evidence, EvidenceStatus
+        from apps.evidences.storage import sha256_of
+        from apps.evidences.tasks import generate_evidence_derivatives
+        from apps.projects.models import ProjectMember
+
+        users_by_role = {user.role: user for user in User.objects.all()}
+        created = 0
+
+        for code, specs in EVIDENCES.items():
+            project = projects_by_code.get(code)
+            if project is None:
+                continue
+            for index, spec in enumerate(specs):
+                author = users_by_role.get(spec["role"])
+                if (
+                    author is None
+                    or not ProjectMember.objects.filter(
+                        project=project, user=author, is_active=True
+                    ).exists()
+                ):
+                    continue
+
+                # Pas de doublon : la clé est le couple (projet, description).
+                if Evidence.objects.filter(
+                    project=project, description=spec["description"]
+                ).exists():
+                    continue
+
+                width, height = 1280, 960
+                image = Image.new("RGB", (width, height), spec["color"])
+                for x in range(0, width, 80):
+                    for y in range(0, height, 80):
+                        image.putpixel((x, y), (250, 250, 240))
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=80)
+                payload = buffer.getvalue()
+
+                captured_at = timezone.now() - timedelta(days=spec["days_ago"])
+                latitude = spec.get("latitude")
+                longitude = spec.get("longitude")
+                evidence = Evidence(
+                    project=project,
+                    author=author,
+                    captured_at=captured_at,
+                    latitude=Decimal(str(latitude)) if latitude is not None else None,
+                    longitude=Decimal(str(longitude)) if longitude is not None else None,
+                    gps_accuracy=spec.get("gps_accuracy"),
+                    gps_status="AVAILABLE" if latitude is not None else "UNAVAILABLE",
+                    device_model=spec.get("device_model", "Tecno Spark 10"),
+                    device_platform="Android 13",
+                    app_version="0.5.0",
+                    description=spec["description"],
+                    hash_sha256=sha256_of(payload),
+                    idempotency_key=f"seed-{code.lower()}-{index:02d}",
+                    size_bytes=len(payload),
+                    content_type="image/jpeg",
+                    status=spec.get("status", EvidenceStatus.PENDING),
+                    sync_status="SYNCED",
+                )
+                evidence.file.save(
+                    f"seed-{code.lower()}-{index:02d}.jpg", ContentFile(payload), save=False
+                )
+                evidence.save()
+                generate_evidence_derivatives(evidence.pk)
+                created += 1
+
+        return created
+
+    def _seed_projects(self) -> tuple[int, int, int, int, int, int]:
         from apps.organizations.models import Organization, OrganizationMember
         from apps.projects.models import Project, ProjectMember
 
@@ -627,6 +783,7 @@ class Command(BaseCommand):
                 created_memberships += int(membership_created)
 
         created_milestones, created_tasks = self._seed_planning(projects_by_code)
+        created_evidences = self._seed_evidences(projects_by_code)
 
         return (
             created_organizations,
@@ -634,4 +791,5 @@ class Command(BaseCommand):
             created_memberships,
             created_milestones,
             created_tasks,
+            created_evidences,
         )

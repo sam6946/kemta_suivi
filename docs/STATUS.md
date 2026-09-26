@@ -1,9 +1,11 @@
 # État d'avancement — MVP KEMTA SUIVI
 
-Dernière mise à jour : phases 0, 1, 2, 3 et 4 livrées.
-Preuves d'exécution : `cd backend && pytest` → **300 tests**, couverture **94 %** ;
-`cd frontend && npm test` → **38 tests** ; `npm run build` → OK ;
+Dernière mise à jour : phases 0, 1, 2, 3, 4 et 5 livrées.
+Preuves d'exécution : `cd backend && pytest --cov=apps` → **342 tests**, couverture **94 %** ;
+`cd frontend && npm test` → **64 tests** ; `npm run build` → OK ;
 `ruff check` + `ruff format --check` → propres ; `npm run lint` → propre.
+Parcours vérifié en direct derrière le proxy frontend (upload multipart, rejeu idempotent,
+galerie, décision de validation, téléchargement de la miniature).
 
 ## Vue par phase
 
@@ -14,7 +16,7 @@ Preuves d'exécution : `cd backend && pytest` → **300 tests**, couverture **94
 | 2 — Authentification et RBAC | téléphone + OTP, connexion JWT, refresh, RBAC 9 rôles, **réinitialisation du mot de passe**, rate limiting, journalisation | ✅ livrée |
 | 3 — Organisations, projets, membres | organisations, projets, membres, rôles par projet, permissions backend, écrans responsive, tests de permissions | ✅ livrée |
 | 4 — Jalons, tâches, planning | jalons, tâches, planning listé, avancement serveur, alertes de retard | ✅ livrée |
-| 5 — Preuves terrain | capture, compression, GPS, hash, statuts, validations | ⏳ à venir |
+| 5 — Preuves terrain | capture, compression, GPS, hash, statuts, validations | ✅ livrée |
 | 6 — Offline-first | IndexedDB, file de synchronisation, idempotence, conflits | ⏳ à venir |
 | 7 — Budget, dépenses | budget, postes, dépenses, paiements, transactions atomiques | ⏳ à venir |
 | 8 — Dashboard agrégé | endpoint `/api/projects/{id}/dashboard/`, alertes, cache | ⏳ à venir |
@@ -32,13 +34,13 @@ Preuves d'exécution : `cd backend && pytest` → **300 tests**, couverture **94
 | MVP-004 | RBAC et permissions backend | ✅ | `test_role_matrix.py`, `apps/projects/tests/test_access_matrix.py` |
 | MVP-005 | Organisations, projets, membres | ✅ | `test_organizations.py`, `test_projects.py`, `test_members.py` |
 | MVP-006 | Jalons, tâches, avancement | ✅ | `test_milestones.py` (14) · `test_tasks.py` (17) · `test_progress.py` (18) |
-| MVP-007 | Capture de preuve terrain | ⏳ phase 5 | — |
-| MVP-008 | Validation et historique des preuves | ⏳ phase 5 | — |
+| MVP-007 | Capture de preuve terrain | ✅ | `apps/evidences/tests/test_capture.py` (20) · `src/lib/__tests__/media.test.ts` (13) · `src/pages/__tests__/ProjectEvidences.test.tsx` (13) |
+| MVP-008 | Validation et historique des preuves | ✅ | `apps/evidences/tests/test_validation.py` (20) |
 | MVP-009 | File offline et synchronisation | ⏳ phase 6 | — |
 | MVP-010 | Budget et dépenses | ⏳ phase 7 | montants FCFA entiers déjà appliqués (projet) |
 | MVP-011 | Dashboard projet agrégé | ⏳ phase 8 | compteurs réels déjà affichés (pas de mock) |
 | MVP-012 | Journal d'activité | 🟡 | modèle immuable + événements auth/org/projet/membres ; écran d'activité en phase 9 |
-| MVP-013 | Médias | ⏳ phase 5/10 | — |
+| MVP-013 | Médias | 🟡 | compression côté appareil (≤ 1600 px, q0.82) + miniature WebP 320 px et version liste JPEG 1080 px générées par Celery ; antivirus/quotas en phase 10 |
 | MVP-014 | Notifications et événements | ⏳ phase 10 | SMS/email déjà traités par Celery |
 | MVP-015 | Observabilité et healthchecks | 🟡 | `/api/health/`, logs JSON, `request_id`, métriques à compléter en phase 11 |
 | MVP-016 | Tests E2E et seed | 🟡 | seed dev complet (9 comptes, 3 organisations, 4 projets FCFA, membres) ; E2E Playwright en phase 11 |
@@ -51,15 +53,15 @@ Preuves d'exécution : `cd backend && pytest` → **300 tests**, couverture **94
 `LOGOUT`, `PASSWORD_RESET_REQUESTED/FAILED/CONFIRMED/DENIED`, `PASSWORD_CHANGED`,
 `EMAIL_ADDED/VERIFIED`, `ORG_CREATED/UPDATED`, `PROJECT_CREATED/UPDATED/ARCHIVED`,
 `MEMBER_ADDED/ROLE_CHANGED/REMOVED`, `MILESTONE_CREATED/UPDATED/DELETED`,
-`TASK_CREATED/UPDATED/STATUS_CHANGED/DELETED`.
+`TASK_CREATED/UPDATED/STATUS_CHANGED/DELETED`, `EVIDENCE_CAPTURED/VALIDATED/REJECTED/FLAGGED/REOPENED`.
 
 ## Points ouverts (ADR)
 
 | # | Décision | Échéance |
 |---|---|---|
-| ADR-004 | Upload direct Django vs presigned URL S3 | avant phase 5 |
-| ADR-005 | Fournisseur SMS (coût par OTP, couverture réseau) | avant phase 5 (preuves terrain) |
-| ADR-006 | Stockage média : volume chiffré vs S3-compatible | avant phase 5 |
+| ADR-004 | Upload direct Django vs presigned URL S3 | ✅ tranchée en phase 5 : upload direct (multipart) avec `Idempotency-Key` ; presigned S3 réévalué si le volume l'exige |
+| ADR-005 | Fournisseur SMS (coût par OTP, couverture réseau) | ⏳ avant mise en production (adaptateur console en dev) |
+| ADR-006 | Stockage média : volume chiffré vs S3-compatible | ✅ tranchée en phase 5 : volume local privé, accès servi par l'API, `X-Accel-Redirect` en production ; S3-compatible possible sans changer le contrat (chemins relatifs) |
 | ADR-007 | Procédure « numéro perdu / changement de SIM » | avant mise en production |
 | ADR-008 | Invitations par SMS (`ProjectInvitation`) | phase ultérieure |
 | ADR-009 | Gantt graphique (barres temporelles) vs planning listé | retour utilisateur avant phase 8 |

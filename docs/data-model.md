@@ -131,24 +131,47 @@ Implémentation : `apps/projects/models.py`, calcul dans `apps/projects/progress
 
 ---
 
-## 4. Preuves terrain (Phase 5/6)
+## 4. Preuves terrain (Phase 5 — MVP-007, 008 ; Phase 6 — MVP-009)
 
 ### `Evidence`
-`id` · `project` · `author` (`User`) · `file` · `thumbnail` · `hash_sha256` (indexé) ·
-`captured_at` (horodatage appareil) · `received_at` (serveur) · `latitude` · `longitude` ·
-`gps_accuracy` · `gps_status` · `device_model` · `device_platform` · `app_version` ·
-`description` · `sync_status` (`PENDING` / `UPLOADING` / `SYNCED` / `FAILED` / `CONFLICT`) ·
+`id` · `project` · `author` (`User`) · `task` (nullable) · `file` · `thumbnail` (WebP 320 px,
+qualité 75) · `list_version` (JPEG 1080 px pour les listes) · `hash_sha256` (indexé) ·
+`captured_at` (horodatage appareil) · `received_at` (serveur, `auto_now_add`) · `latitude` ·
+`longitude` · `gps_accuracy` · `gps_status` (`AVAILABLE` / `UNAVAILABLE` / `DENIED`) ·
+`device_model` · `device_platform` · `app_version` · `description` · `size_bytes` ·
+`content_type` · `sync_status` (`PENDING` / `UPLOADING` / `SYNCED` / `FAILED` / `CONFLICT`) ·
 `status` (`PENDING` / `VALIDATED` / `REJECTED` / `FLAGGED`) · `idempotency_key` · `deleted_at`.
 
-Contraintes : `unique(project, hash_sha256)` → dédoublonnage serveur (doublon → `409
-duplicate_evidence`, on renvoie l'existante). `unique(author, idempotency_key)`.
+Contraintes :
+- `UniqueConstraint(project, hash_sha256)` **partielle** (hors preuves supprimées) → dédoublonnage
+  à l'échelle du projet ; un doublon renvoie `409 duplicate_evidence` avec l'existante ;
+- `UniqueConstraint(author, idempotency_key)` → rejouer un envoi interrompu renvoie **la même**
+  preuve (`200` + `Idempotency-Replayed: true`) au lieu d'en créer une seconde ;
+- index `(project, status, deleted_at)` et `(author, created_at)` pour la galerie et la file
+  d'attente du validateur.
+
+Règles de capture :
+- le type du fichier est établi sur son **contenu réel** (magic bytes Pillow) — le nom et le
+  `Content-Type` envoyés par l'appareil ne font pas foi ; JPEG/PNG/WebP, ≤ 10 Mo, ≤ 4000 px ;
+- le chemin de stockage est **régénéré** côté serveur
+  (`evidences/{project_id}/{yyyy}/{mm}/{uuid}.ext`) ;
+- `hash_sha256` est l'empreinte du fichier **reçu** (recalculée serveur) ; le client calcule la
+  même empreinte avant envoi pour que le doublon soit détecté même hors ligne (Phase 6) ;
+- `captured_at` ne peut pas être dans le futur (`captured_at_in_future`) ;
+- si le projet a des coordonnées et que le GPS est disponible, `distance_from_site_m` est calculée
+  (Haversine) et `inside_geofence` reflète le périmètre du projet ; l'upload hors périmètre est
+  refusé en `422 evidence_out_of_geofence` quand `EVIDENCE_GEOFENCE_ENFORCE` est actif ;
+- `sync_status` est renseigné côté serveur (`SYNCED` à la réception) : la file locale (IndexedDB)
+  reste la source de vérité de l'appareil jusqu'à confirmation (Phase 6).
 
 ### `EvidenceValidation`
 `evidence` · `actor` · `from_status` · `to_status` · `action` (`VALIDATE` / `REJECT` / `FLAG` /
-`REOPEN`) · `comment` (obligatoire pour `REJECT` et `FLAG`) · `created_at`. Historique en
-append-only, affiché dans l'UI.
-
----
+`REOPEN`) · `comment` (obligatoire pour `REJECT` et `FLAG`) · `created_at`.
+Historique **append-only** : `save()` sur une ligne existante ou `delete()` lèvent une erreur,
+y compris depuis l'administration. Transitions autorisées : `PENDING → {VALIDATED, REJECTED,
+FLAGGED}`, `VALIDATED → {FLAGGED, REJECTED, PENDING}`, `REJECTED → {PENDING, VALIDATED}`,
+`FLAGGED → {PENDING, VALIDATED, REJECTED}`. Un acteur ne valide jamais sa propre preuve
+(`cannot_validate_own_evidence`, sauf administrateur plateforme).
 
 ## 5. Finances (Phase 7)
 

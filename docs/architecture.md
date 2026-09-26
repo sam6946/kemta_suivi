@@ -73,13 +73,16 @@ adaptateur console → les tests tournent sans infrastructure externe.
   Pas de presigned URL dans le MVP (simplicité) — évolution documentée en ADR-004.
 - **Validation serveur** : type MIME réel (magic bytes via Pillow), taille max 10 Mo, dimensions
   max 4000 px ; refus → `415`/`413`. Le nom de fichier client est ignoré, le chemin de
-  stockage est régénéré (`evidences/{project_id}/{yyyy}/{mm}/{uuid}.jpg`).
-- **Dérivées** : à l'upload, la originale est conservée et une **thumbnail** (320 px, WebP q75)
+  stockage est régénéré (`evidences/{project_id}/{yyyy}/{mm}/{uuid}.{ext}`).
+- **Dérivées** : à l'upload, l'originale est conservée et une **miniature** (320 px, WebP q75)
   + une version « liste » (1080 px) sont générées **en tâche Celery**, jamais dans la requête
   HTTP. Les listes n'utilisent que les thumbnails.
-- **Accès** : les médias ne sont **pas** servis publiquement par défaut. En dev : `MEDIA_URL`
-  servi par Django/Nginx. En prod : fichiers privés, servis via une URL signée courte ou via
-  Nginx avec contrôle d'accès (`X-Accel-Redirect` + vérification d'appartenance au projet).
+- **Accès** : les médias ne sont **pas** servis publiquement. Les fichiers passent toujours par
+  l'API (`/api/evidences/{id}/file/`, `/thumbnail/`) qui vérifie l'appartenance au projet
+  (`404` sinon) et répond en `Cache-Control: private`. Avec `MEDIA_X_ACCEL_REDIRECT=true`, Django
+  renvoie un `X-Accel-Redirect` et c'est Nginx qui sert le fichier — le contrôle d'accès reste
+  dans l'application. Les URLs renvoyées sont **relatives** pour rester valables derrière un proxy.
+  Implémenté et testé en phase 5 (ADR-004 et ADR-006 tranchées).
 - **Nommage/version** : `Evidence.hash_sha256` permet la déduplication ; aucun fichier orphelin
   (tâche de nettoyage hebdomadaire).
 
@@ -118,9 +121,9 @@ adaptateur console → les tests tournent sans infrastructure externe.
 | ADR-001 | Téléphone = identifiant unique, email facultatif | Acceptée | Produit | — |
 | ADR-002 | Réinitialisation du mot de passe par OTP SMS (P0) | Acceptée | Produit/Tech | — |
 | ADR-003 | Montants en entiers FCFA, pas de centimes | Acceptée | Finance/Tech | — |
-| ADR-004 | Upload direct Django vs presigned URL S3 | **Ouverte** | Tech | avant Phase 5 |
+| ADR-004 | Upload direct Django vs presigned URL S3 | Acceptée (upload direct) | Tech | ✅ Phase 5 |
 | ADR-005 | Fournisseur SMS (local vs international) + coût/OTP | **Ouverte** | Produit | avant Phase 2 |
-| ADR-006 | Stockage média : volume chiffré vs S3-compatible | **Ouverte** | Tech | avant Phase 5 |
+| ADR-006 | Stockage média : volume chiffré vs S3-compatible | Acceptée (volume privé + `X-Accel-Redirect`) | Tech | ✅ Phase 5 |
 | ADR-007 | Procédure « numéro perdu / changement de SIM » | **Ouverte** | Produit | avant Phase 2 |
 | ADR-008 | SSE/WebSocket pour le temps réel (post-MVP) | Reportée | Tech | post-MVP |
 

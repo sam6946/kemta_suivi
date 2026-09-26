@@ -311,3 +311,73 @@ a:hover {
 input[type="range"] {
   width: 120px;
 }
+
+/* Phase 5 — preuves terrain : galerie de vignettes et statuts. */
+.evidence-grid {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.evidence-grid li {
+  display: grid;
+  gap: 4px;
+}
+
+.evidence-thumb {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.evidence-thumb img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  background: var(--surface-strong, #e6e8ee);
+}
+
+.evidence-status {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+}
+
+.status-info {
+  background: #e8f0fe;
+  color: #1a3d7c;
+}
+
+.status-success {
+  background: #e6f4ea;
+  color: #1d5c2f;
+}
+
+.status-error {
+  background: #fde8e8;
+  color: #8a1c1c;
+}
+
+.status-warning {
+  background: #fdf3e0;
+  color: #7a4a12;
+}
+
+.evidence-preview {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.evidence-preview img {
+  border-radius: 8px;
+}

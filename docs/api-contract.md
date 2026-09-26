@@ -208,20 +208,55 @@ dates incohérentes et avancement hors bornes → `400` avec le champ concerné 
 l'en-tête `X-Project-Progress` — le client n'a donc jamais à recalculer quoi que ce soit. Performance : `/schedule/` reste à nombre constant de
 requêtes (`test_schedule_has_no_n_plus_one`).
 
-## 6. Preuves terrain (Phase 5/6 — MVP-007, 008, 009)
+## 6. Preuves terrain (Phase 5 — MVP-007, 008 ; Phase 6 — MVP-009)
 
 | Méthode | Endpoint | Notes |
 |---|---|---|
-| `POST` | `/api/evidences/` | `multipart` : `file`, `project`, `captured_at`, `latitude?`, `longitude?`, `gps_status`, `description?` ; `Idempotency-Key` obligatoire |
-| `GET` | `/api/projects/{id}/evidences/` | galerie paginée, `?status=&sync_status=&author=` |
-| `GET` | `/api/evidences/{id}/` | détail + historique |
+| `POST` | `/api/evidences/` | `multipart` : `file`, `project`, `captured_at`, `gps_status`, `latitude?`, `longitude?`, `gps_accuracy?`, `device_model?`, `device_platform?`, `app_version?`, `description?`, `task?` ; en-tête `Idempotency-Key` **obligatoire** |
+| `GET` | `/api/projects/{id}/evidences/` | galerie paginée + `counts` par statut ; `?status=` (CSV), `?sync_status=`, `?author=`, `?task=`, `?pending=true` |
+| `GET` | `/api/evidences/{id}/` | détail + `permissions` par preuve + `last_validation` |
+| `GET` | `/api/evidences/{id}/history/` | historique paginé des décisions (append-only) |
 | `POST` | `/api/evidences/{id}/transition/` | `{ "action": "VALIDATE"\|"REJECT"\|"FLAG"\|"REOPEN", "comment": "…" }` |
-| `GET` | `/api/evidences/{id}/history/` | historique paginé des validations |
-| `POST` | `/api/sync/batch/` | reprise de synchronisation : envoi d'un lot d'opérations avec leurs clés d'idempotence |
+| `GET` | `/api/evidences/{id}/file/` | fichier d'origine, accès contrôlé par appartenance au projet |
+| `GET` | `/api/evidences/{id}/thumbnail/` | miniature (WebP, JPEG de repli) — retombe sur l'original tant qu'elle n'est pas prête |
+| `GET` | `/api/evidences/pending/` | file d'attente du validateur, tous projets confondus ; `?older_than_hours=` |
+| `POST` | `/api/sync/batch/` | **Phase 6 (MVP-009)** : reprise de synchronisation par lot, mêmes clés d'idempotence |
 
-Réponses : `201` à la création (`status=PENDING`, `sync_status=SYNCED`) · `409 duplicate_evidence`
-si `(project, hash)` existe déjà (l'objet existant est renvoyé) · `413`/`415` sur fichier
-non conforme · `422 evidence_out_of_geofence` si GPS disponible et hors périmètre.
+**Création** : `201` avec `status=PENDING`, `sync_status=SYNCED`, `hash_sha256` (empreinte du
+fichier **reçu**, recalculée côté serveur) et `distance_from_site_m` / `inside_geofence` quand le
+projet a des coordonnées. Le nom du fichier envoyé est ignoré : le chemin est régénéré
+(`evidences/{project_id}/{yyyy}/{mm}/{uuid}.ext`).
+
+**Rejeu** : même `Idempotency-Key` + même auteur → `200` (et non `201`) avec l'en-tête
+`Idempotency-Replayed: true` et **la même preuve** : un envoi réessayé après une coupure réseau
+n'est jamais dupliqué.
+
+**URLs de fichiers** : `file_url` et `thumbnail_url` sont des **chemins relatifs**
+(`/api/evidences/{id}/file/`) ; le client les résout sur son propre hôte, ce qui reste valable
+derrière un proxy. Les réponses sont `Cache-Control: private` (jamais de cache partagé) et, si
+`MEDIA_X_ACCEL_REDIRECT` est actif, le corps est délégué à Nginx (`X-Accel-Redirect`).
+
+| Code | HTTP | Sens |
+|---|---|---|
+| `idempotency_key_required` | 400 | en-tête `Idempotency-Key` absent |
+| `duplicate_evidence` | 409 | même `hash_sha256` déjà déposé sur ce projet ; `details.evidence` porte l'existante |
+| `file_too_large` | 413 | au-delà de `MAX_UPLOAD_SIZE_MB` (10 Mo) |
+| `unsupported_media_type` | 415 | contenu réel non JPEG/PNG/WebP (`details.allowed`) |
+| `file_empty` · `image_dimensions_too_large` | 400 | fichier vide ; image > 4000 px sur un côté |
+| `captured_at_in_future` | 400 | horloge de l'appareil en avance (`details.server_time`) |
+| `evidence_out_of_geofence` | 422 | photo prise hors du périmètre (`details.distance_m`, `radius_m`) |
+| `comment_required` | 400 | rejet ou signalement sans commentaire |
+| `invalid_transition` | 409 | action incompatible avec le statut courant (`details.allowed_actions`) |
+| `cannot_validate_own_evidence` | 403 | un acteur ne valide pas sa propre preuve (sauf administrateur plateforme) |
+| `invalid_status` | 400 | filtre `status` inconnu |
+
+**Machine à états** : `PENDING → {VALIDATED, REJECTED, FLAGGED}` ·
+`VALIDATED → {FLAGGED, REJECTED, REOPEN}` · `REJECTED → {REOPEN, VALIDATE}` ·
+`FLAGGED → {REOPEN, VALIDATE, REJECT}` (`REOPEN` ramène à `PENDING`). Chaque décision écrit une
+ligne `EvidenceValidation` (acteur, date, action, commentaire) et un `ActivityLog`
+(`evidence_captured`, `evidence_validated`, `evidence_rejected`, `evidence_flagged`,
+`evidence_reopened`). Champ `permissions` renvoyé par preuve :
+`{ validate_evidence, cannot_validate_own, can_see_location }` — l'UI n'invente aucune règle.
 
 ## 7. Finances et dashboard (Phase 7/8 — MVP-010, 011)
 

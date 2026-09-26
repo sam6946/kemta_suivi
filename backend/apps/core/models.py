@@ -115,6 +115,12 @@ class ActivityLog(models.Model):
         TASK_UPDATED = "TASK_UPDATED", "Tâche modifiée"
         TASK_STATUS_CHANGED = "TASK_STATUS_CHANGED", "Statut de tâche modifié"
         TASK_DELETED = "TASK_DELETED", "Tâche supprimée"
+        # Phase 5 — preuves terrain.
+        EVIDENCE_CAPTURED = "EVIDENCE_CAPTURED", "Preuve capturée"
+        EVIDENCE_VALIDATED = "EVIDENCE_VALIDATED", "Preuve validée"
+        EVIDENCE_REJECTED = "EVIDENCE_REJECTED", "Preuve rejetée"
+        EVIDENCE_FLAGGED = "EVIDENCE_FLAGGED", "Preuve signalée"
+        EVIDENCE_REOPENED = "EVIDENCE_REOPENED", "Preuve rouverte"
 
     id = models.BigAutoField(primary_key=True)
     actor = models.ForeignKey(

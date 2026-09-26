@@ -1,4 +1,11 @@
-# Stratégie offline-first, synchronisation et cache (Phase 0)
+# Stratégie offline-first, synchronisation et cache (Phase 0 — implémentée en phase 6)
+
+> **État au terme de la phase 5** : le socle serveur de la synchronisation est en place et testé —
+> `Idempotency-Key` **obligatoire** sur `POST /api/evidences/` (rejeu → même preuve, en-tête
+> `Idempotency-Replayed: true`), dédoublonnage par `hash_sha256` par projet (`409
+> duplicate_evidence` avec la preuve existante), empreinte calculée **sur l'appareil** avant envoi et
+> `sync_status` exposé par l'API. La file locale (IndexedDB) et `POST /api/sync/batch/` restent à
+> construire en phase 6 ; aucun changement de contrat n'est requis. Voir `docs/flows/evidences.md` §7.
 
 Contexte : réseau 3G intermittent, chantiers hors zone de couverture, téléphones Android
 d'entrée/milieu de gamme. **Aucune action terrain critique ne doit dépendre d'une requête

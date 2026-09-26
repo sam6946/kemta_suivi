@@ -5,10 +5,10 @@ Suivi de chantier (Cameroun) : preuves terrain **offline-first**, jalons et plan
 React/TypeScript/Vite.
 
 **Avancement actuel : phases 0 (cadrage), 1 (fondations), 2 (authentification, RBAC et
-réinitialisation du mot de passe), 3 (organisations, projets, membres) et 4 (jalons, tâches,
-planning) livrées et testées.**
-Suite : preuves terrain (phase 5), offline (phase 6), finances (phase 7), dashboard agrégé
-(phase 8). Détail : [`docs/STATUS.md`](docs/STATUS.md).
+réinitialisation du mot de passe), 3 (organisations, projets, membres), 4 (jalons, tâches,
+planning) et 5 (preuves terrain : capture, validation, historique) livrées et testées.**
+Suite : offline (phase 6), finances (phase 7), dashboard agrégé (phase 8).
+Détail : [`docs/STATUS.md`](docs/STATUS.md).
 
 ## 1. Démarrage rapide avec Docker (chemin nominal)
 
@@ -59,10 +59,11 @@ cd frontend && npm install && npm run dev
 ## 3. Tests
 
 ```bash
-cd backend && pytest                       # 300 tests, sans infrastructure externe
+cd backend && pytest                       # 342 tests, sans infrastructure externe
 cd backend && pytest --cov=apps            # couverture (94 %)
 cd backend && ruff check . && ruff format --check .    # lint + formatage
-cd frontend && npm run lint && npm test   # lint ESLint + 38 tests : mot de passe oublié, projets, membres, formatage FCFA
+cd frontend && npm run lint && npm test   # lint ESLint + 64 tests : mot de passe oublié, projets, membres,
+                                          # planning, preuves terrain (compression, GPS, envoi), formatage FCFA
 cd frontend && npm run build               # vérification TypeScript + build
 ```
 
@@ -116,7 +117,27 @@ adaptateur console : **aucun service externe n'est nécessaire**.
   fasse avancer sa tâche (le rôle CONTRACTOR exécute sans replanifier).
 - Écran : `/projets/{id}` — planning ordonné, jalons, tâches, alertes et avancements.
 
-## 7. Documentation
+## 7. Périmètre preuves terrain (Phase 5)
+
+- **Capture** : photo compressée **sur l'appareil** (≤ 1600 px de côté, qualité 0,82) et empreinte
+  **SHA-256** calculée avant l'envoi ; envoi `multipart` avec `Idempotency-Key` obligatoire — un
+  envoi réessayé après une coupure réseau n'est jamais dupliqué (`200` + `Idempotency-Replayed:
+  true`), et une photo déjà déposée est détectée par son hash (`409 duplicate_evidence`).
+- **Authenticité** : le contenu réel du fichier est vérifié (magic bytes : JPEG/PNG/WebP, ≤ 10 Mo,
+  ≤ 4000 px), le nom d'origine est ignoré et le chemin de stockage est régénéré côté serveur.
+- **GPS explicite** : la position est demandée à l'utilisateur (`AVAILABLE` / `UNAVAILABLE` /
+  `DENIED`), la distance au chantier est calculée (Haversine) et un envoi hors périmètre est
+  refusé en `422` quand `EVIDENCE_GEOFENCE_ENFORCE` est actif — jamais d'échec silencieux.
+- **Validation** : machine à états fermée (`PENDING` / `VALIDATED` / `REJECTED` / `FLAGGED`),
+  commentaire obligatoire pour un rejet ou un signalement, personne ne valide sa propre preuve,
+  historique append-only (acteur, date, action, commentaire) et `ActivityLog` à chaque décision.
+- **Médias** : miniature WebP 320 px et version allégée JPEG 1080 px générées par Celery ; les
+  fichiers ne sont jamais publics — l'accès passe par l'API (`/api/evidences/{id}/file/`), avec
+  `Cache-Control: private` et délégation possible à Nginx (`MEDIA_X_ACCEL_REDIRECT`).
+- Écran : `/projets/{id}` → section **Preuves** (capture guidée, galerie avec statuts, détail,
+  validation et historique).
+
+## 8. Documentation
 
 | Document | Contenu |
 |---|---|
@@ -130,21 +151,22 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 | [`docs/flows/authentication.md`](docs/flows/authentication.md) | Flux inscription / OTP / connexion / **réinitialisation du mot de passe** |
 | [`docs/flows/project.md`](docs/flows/project.md) | Flux organisation → projet → membres, règles d'accès 403/404, performance |
 | [`docs/flows/planning.md`](docs/flows/planning.md) | Flux jalons/tâches, règles de calcul d'avancement et de retard, permissions |
+| [`docs/flows/evidences.md`](docs/flows/evidences.md) | Flux preuve terrain : capture hors ligne, envoi idempotent, périmètre, validation, historique |
 | [`docs/STATUS.md`](docs/STATUS.md) | État d'avancement phase par phase et fonctionnalité par fonctionnalité |
 
-## 8. Structure du dépôt
+## 9. Structure du dépôt
 
 ```
 backend/     config/ (settings, urls, celery) · apps/core (journal, santé, erreurs, montants) ·
              apps/users (identité, OTP, sessions, rôles) ·
              apps/organizations (organisations, membres) ·
-             apps/projects (projets, membres, règles d'accès) · tests
+             apps/projects (projets, membres, règles d'accès) · apps/evidences (preuves, validations) · tests
 frontend/    src/ (api, auth, components, pages) · tests unitaires (vitest)
 docs/        cadrage Phase 0 et spécifications
 docker-compose.yml · docker-compose.prod.yml · .env.example
 ```
 
-## 9. Règles non négociables du projet
+## 10. Règles non négociables du projet
 
 1. Aucun secret dans le dépôt : uniquement des variables d'environnement (`.env.example` documenté).
 2. Aucun OTP, mot de passe ou jeton en clair — ni en base, ni dans les logs, ni dans les réponses.

@@ -99,3 +99,47 @@ def test_seed_skip_projects_creates_users_only():
     assert Project.objects.count() == 0
     assert Milestone.objects.count() == 0
     assert Task.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_seed_creates_field_evidence_with_statuses():
+    """La démo contient des preuves dans chaque statut, avec miniatures et sans binaire committé."""
+    call_command("seed_dev", stdout=StringIO())
+
+    from apps.evidences.models import Evidence, EvidenceStatus
+
+    assert Evidence.objects.count() == 7
+    statuses = set(Evidence.objects.values_list("status", flat=True))
+    assert statuses == {
+        EvidenceStatus.PENDING,
+        EvidenceStatus.VALIDATED,
+        EvidenceStatus.REJECTED,
+        EvidenceStatus.FLAGGED,
+    }
+
+    for evidence in Evidence.objects.select_related("project", "author"):
+        # Auteur membre du projet, empreinte valide, miniature prête pour la galerie.
+        assert ProjectMember.objects.filter(
+            project=evidence.project, user=evidence.author, is_active=True
+        ).exists()
+        assert len(evidence.hash_sha256) == 64
+        assert evidence.thumbnail and evidence.list_version
+        assert evidence.file.size > 0
+        assert evidence.description
+
+    # Les empreintes sont uniques par projet (contrainte de déduplication).
+    seen = set()
+    for evidence in Evidence.objects.all():
+        key = (evidence.project_id, evidence.hash_sha256)
+        assert key not in seen
+        seen.add(key)
+
+
+@pytest.mark.django_db
+def test_seed_evidences_are_idempotent():
+    call_command("seed_dev", stdout=StringIO())
+    call_command("seed_dev", stdout=StringIO())
+
+    from apps.evidences.models import Evidence
+
+    assert Evidence.objects.count() == 7

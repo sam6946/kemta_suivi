@@ -60,6 +60,15 @@ export default function App() {
           </RequireAuth>
         }
       />
+      {/* Phase 5 — preuves terrain : lien direct pour le terrain (même écran, ancre dédiée) */}
+      <Route
+        path="/projets/:id/preuves"
+        element={
+          <RequireAuth>
+            <ProjectDetailPage />
+          </RequireAuth>
+        }
+      />
       <Route path="*" element={<Navigate to="/connexion" replace />} />
     </Routes>
   );

@@ -8,6 +8,7 @@ import { projectsApi, type Project, type ProjectMember } from "../api/projects";
 import { fetchRoles, type RoleMeta } from "../api/roles";
 import { messageForErrorCode } from "../auth/passwordPolicy";
 import { Alert, Button, Field } from "../components/ui";
+import ProjectEvidences from "./ProjectEvidences";
 import ProjectPlanning from "./ProjectPlanning";
 import { formatDate, formatFcfa, formatPercent } from "../lib/format";
 
@@ -153,6 +154,8 @@ export default function ProjectDetailPage() {
       </section>
 
       <ProjectPlanning project={project} members={members} onChanged={load} />
+
+      <ProjectEvidences project={project} onChanged={load} />
 
       <section className="card">
         <h2 style={{ fontSize: "1rem", marginTop: 0 }}>Membres ({members.length})</h2>

@@ -12,4 +12,5 @@ urlpatterns = [
     path("api/meta/", include("apps.users.urls_meta")),
     path("api/", include("apps.organizations.urls")),
     path("api/", include("apps.projects.urls")),
+    path("api/", include("apps.evidences.urls")),
 ]

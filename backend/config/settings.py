@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "apps.users",
     "apps.organizations",
     "apps.projects",
+    "apps.evidences",
 ]
 
 MIDDLEWARE = [
@@ -254,6 +255,13 @@ STATIC_URL = "static/"
 STATIC_ROOT = env.str("STATIC_ROOT", default=str(ROOT_DIR / "var" / "static"))
 
 MAX_UPLOAD_SIZE_MB = env.int("MAX_UPLOAD_SIZE_MB", default=10)
+
+# Preuves terrain (MVP-007 / MVP-008)
+# Le contrôle de périmètre refuse (422) une photo prise manifestement hors chantier ; il peut
+# être assoupli en exploitation si les relevés GPS de terrain sont imprécis.
+EVIDENCE_GEOFENCE_ENFORCE = env.bool("EVIDENCE_GEOFENCE_ENFORCE", default=True)
+# En production, les médias sont servis par Nginx après contrôle d'accès (X-Accel-Redirect).
+MEDIA_X_ACCEL_REDIRECT = env.bool("MEDIA_X_ACCEL_REDIRECT", default=False)
 
 # ---------------------------------------------------------------------------
 # CORS

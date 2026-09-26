@@ -61,6 +61,12 @@ modification est journalisée (`MEMBER_ROLE_CHANGED`).
 | Rouvrir une preuve | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Voir l'historique de validation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
+*Implémentation (phase 5)* : `capture_evidence` et `validate_evidence` sont exposés par la
+séquence `permissions` du projet (`PROJECT_PERMISSION_KEYS`) et recalculés **preuve par preuve**
+par l'API (`{ validate_evidence, cannot_validate_own, can_see_location }`) : l'écran n'affiche que
+les décisions réellement autorisées. Personne ne valide sa propre preuve — l'administrateur
+plateforme (supervision) est la seule exception documentée.
+
 ## 6. Matrice — finances
 
 | Action | PLATFORM_ADMIN | ORG_OWNER | PROJECT_OWNER | ENGINEER | CONTRACTOR | FIELD_AGENT | VALIDATOR | FINANCE | INVESTOR |
