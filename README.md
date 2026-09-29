@@ -4,27 +4,30 @@ Suivi de chantier (Cameroun) : preuves terrain **offline-first**, jalons et plan
 **FCFA**, journal d'activité. Backend Django/DRF + PostgreSQL/Redis/Celery, frontend
 React/TypeScript/Vite.
 
-**Avancement actuel : phases 0 (cadrage), 1 (fondations), 2 (authentification, RBAC et
-réinitialisation du mot de passe), 3 (organisations, projets, membres), 4 (jalons, tâches,
-planning), 5 (preuves terrain : capture, validation, historique) et 6 (offline-first :
-file locale, synchronisation automatique, conflits) livrées et testées.**
-Suite : finances (phase 7), dashboard agrégé (phase 8).
-Détail : [`docs/STATUS.md`](docs/STATUS.md).
+**MVP : phases 0 à 11 implémentées** — authentification par téléphone avec réinitialisation
+MVP-017, gestion de chantier et finances, preuves offline-first, dashboard, journal d'activité,
+notifications, sécurité des médias et observabilité. L'inscription n'exige pas d'adresse email.
+Les résultats de validation et les dépendances restant à fournir pour une mise en production sont
+consignés dans [`docs/STATUS.md`](docs/STATUS.md).
 
-## 1. Démarrage rapide avec Docker (chemin nominal)
+## 1. Démarrage rapide
 
 ```bash
-cp .env.example .env          # puis remplacez SECRET_KEY
-docker compose up -d --build  # db + redis + web + worker + beat + frontend
-docker compose exec web python manage.py seed_dev   # comptes + organisations + projets (dev)
+./dev.sh
 ```
+
+Une commande prépare les environnements nécessaires, applique les migrations, crée les données
+de démonstration et lance l'API ainsi que le frontend. Docker est utilisé s'il est disponible ;
+sinon le script bascule sur SQLite/cache local. Modes explicites : `./dev.sh --local` et
+`./dev.sh --docker`. La configuration locale `.env` est ignorée par Git ; le script peut la
+initialiser depuis `.env.example`.
 
 - Frontend : <http://localhost:5173>
 - API : <http://localhost:8000/api/>
-- Santé : <http://localhost:8000/api/health/> (vérifie application, PostgreSQL et Redis)
+- Santé : <http://localhost:8000/api/health/>
 - Admin : <http://localhost:8000/admin/>
 
-Comptes de démonstration (un par rôle) — création par `seed_dev`, **développement uniquement** :
+Comptes de démonstration — **développement uniquement** :
 
 | Rôle | Téléphone | Mot de passe |
 |---|---|---|
@@ -33,46 +36,25 @@ Comptes de démonstration (un par rôle) — création par `seed_dev`, **dévelo
 | Agent terrain | `+237 690 000 006` | `Kemta#2026Demo` |
 | Financier | `+237 690 000 008` | `Kemta#2026Demo` |
 
-`seed_dev` crée aussi 3 organisations (Douala, Kribi, Yaoundé) et 4 projets réalistes en FCFA
-(22,5 à 320 millions), avec leurs membres — de quoi naviguer immédiatement dans `/projets`.
+`seed_dev` ajoute 3 organisations (Douala, Kribi, Yaoundé) et 4 projets de démonstration en FCFA.
+Pour tester l'OTP sans téléphone, l'adaptateur SMS de développement conserve les messages dans
+`GET /api/dev/outbox/`, accessible uniquement en local et jamais en production. Aucun code OTP
+n'est écrit dans les logs.
 
-**Tester le parcours OTP sans téléphone** : en développement, le fournisseur SMS est un
-adaptateur console et l'écran d'activation comme l'écran de réinitialisation affichent un bouton
-« Afficher les codes de test » qui lit `GET /api/dev/outbox/` (endpoint désactivé — HTTP 404 —
-dès que `DEBUG=false` ou `DJANGO_ENV=production`). Aucun code OTP n'est écrit dans les logs.
-
-## 2. Démarrage sans Docker
+## 2. Tests et qualité
 
 ```bash
-# Backend (SQLite en local, aucun service externe requis)
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r backend/requirements-dev.txt
-cd backend
-USE_SQLITE=true USE_LOCAL_CACHE=true CELERY_TASK_ALWAYS_EAGER=true \
-  python manage.py migrate && python manage.py seed_dev
-USE_SQLITE=true USE_LOCAL_CACHE=true CELERY_TASK_ALWAYS_EAGER=true \
-  python manage.py runserver 0.0.0.0:8000
-
-# Frontend (proxy /api → http://127.0.0.1:8000)
-cd frontend && npm install && npm run dev
+cd backend && ./.venv/bin/pytest
+cd backend && ./.venv/bin/ruff check . && ./.venv/bin/ruff format --check .
+cd frontend && npm test && npm run lint && npm run build
+cd frontend && npm run test:e2e  # Playwright + Chromium requis
 ```
 
-## 3. Tests
+Les tests unitaires backend utilisent SQLite, cache mémoire, Celery eager et adaptateurs SMS/email
+locaux : aucun service externe n'est requis. `docs/STATUS.md` consigne les résultats détaillés,
+les tests E2E disponibles et les limitations d'exécution de l'environnement.
 
-```bash
-cd backend && pytest                       # 368 tests, sans infrastructure externe
-cd backend && pytest --cov=apps            # couverture (95 %)
-cd backend && ruff check . && ruff format --check .    # lint + formatage
-cd frontend && npm run lint && npm test   # lint ESLint + 94 tests : mot de passe oublié, projets, membres,
-                                          # planning, preuves terrain (compression, GPS, envoi), file hors ligne
-                                          # (persistance, retry, conflits, reprise automatique), formatage FCFA
-cd frontend && npm run build               # vérification TypeScript + build
-```
-
-Les tests backend tournent sur SQLite, cache mémoire, Celery en mode eager et SMS/email en
-adaptateur console : **aucun service externe n'est nécessaire**.
-
-## 4. Périmètre d'authentification livré (Phase 2)
+## 3. Périmètre d'authentification livré (Phase 2)
 
 - Identifiant principal : **numéro de téléphone** normalisé E.164 (Cameroun), l'email est facultatif.
 - Inscription → **OTP SMS haché, expirable, à usage unique**, tentatives et renvois limités,
@@ -88,7 +70,7 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - Rate limiting par numéro/IP, enveloppe d'erreur uniforme avec `request_id`, logs structurés
   sans secret.
 
-## 5. Périmètre organisations / projets / membres (Phase 3)
+## 4. Périmètre organisations / projets / membres (Phase 3)
 
 - **Organisation** : racine du périmètre (propriétaire + membres), un projet y est toujours rattaché.
 - **Projet** : nom, code unique par organisation, ville/région, coordonnées, rayon de périmètre,
@@ -104,7 +86,7 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - Écrans : `/organisations` (liste + création) et `/projets` (liste, filtres, création),
   `/projets/:id` (détail + gestion des membres).
 
-## 6. Périmètre planification (Phase 4)
+## 5. Périmètre planification (Phase 4)
 
 - **Jalons** : étape datée avec statut, date prévue/réelle, ordre et **poids** (pondération de
   l'avancement) ; suppression logique.
@@ -119,7 +101,7 @@ adaptateur console : **aucun service externe n'est nécessaire**.
   fasse avancer sa tâche (le rôle CONTRACTOR exécute sans replanifier).
 - Écran : `/projets/{id}` — planning ordonné, jalons, tâches, alertes et avancements.
 
-## 7. Périmètre preuves terrain (Phase 5)
+## 6. Périmètre preuves terrain (Phase 5)
 
 - **Capture** : photo compressée **sur l'appareil** (≤ 1600 px de côté, qualité 0,82) et empreinte
   **SHA-256** calculée avant l'envoi ; envoi `multipart` avec `Idempotency-Key` obligatoire — un
@@ -133,13 +115,14 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - **Validation** : machine à états fermée (`PENDING` / `VALIDATED` / `REJECTED` / `FLAGGED`),
   commentaire obligatoire pour un rejet ou un signalement, personne ne valide sa propre preuve,
   historique append-only (acteur, date, action, commentaire) et `ActivityLog` à chaque décision.
-- **Médias** : miniature WebP 320 px et version allégée JPEG 1080 px générées par Celery ; les
-  fichiers ne sont jamais publics — l'accès passe par l'API (`/api/evidences/{id}/file/`), avec
-  `Cache-Control: private` et délégation possible à Nginx (`MEDIA_X_ACCEL_REDIRECT`).
+- **Médias sécurisés** : miniature WebP 320 px et version JPEG 1080 px générées par Celery ;
+  antivirus asynchrone ClamAV, quarantaine jusqu'au statut `CLEAN`, reprise des scans interrompus,
+  quotas utilisateur/projet et jetons média signés à durée courte. Les médias restent privés
+  (`Cache-Control: private, no-store`) ; délégation Nginx possible (`MEDIA_X_ACCEL_REDIRECT`).
 - Écran : `/projets/{id}` → section **Preuves** (capture guidée, galerie avec statuts, détail,
   validation et historique).
 
-## 8. Périmètre offline-first (Phase 6)
+## 7. Périmètre offline-first (Phase 6)
 
 - **Le terrain n'attend jamais le réseau** : une photo capturée hors ligne est compressée,
   empreintée puis **écrite dans IndexedDB** (binaire compris, en `ArrayBuffer`) avec sa clé
@@ -161,7 +144,7 @@ adaptateur console : **aucun service externe n'est nécessaire**.
 - **Actions en ligne uniquement** (jamais mises en file en silence) : inscription, connexion, OTP
   et **réinitialisation du mot de passe** — l'interface l'annonce et propose « Réessayer ».
 
-## 9. Périmètre financier (Phase 7)
+## 8. Périmètre financier (Phase 7)
 
 - **Budget tenu côté serveur** : postes budgétaires (somme ≤ budget du projet), dépenses,
   paiements et un **grand livre *append-only*** qui porte le solde après chaque écriture.
@@ -182,9 +165,40 @@ adaptateur console : **aucun service externe n'est nécessaire**.
   ajustement est journalisé avec auteur, date et **valeurs avant/après** ; une correction passe
   par une contre-écriture, jamais par une suppression.
 - **Justificatifs** : PDF ou photo (JPEG/PNG/WebP) vérifiés par leur **signature binaire**,
-  empreints en SHA-256, servis de façon privée.
+  empreints en SHA-256, scannés par ClamAV avant accès et servis par lien signé de façon privée.
 - **En ligne uniquement** : les opérations financières ne sont pas mises en file hors ligne —
   l'interface l'indique et propose de réessayer (contrairement aux preuves terrain).
+
+## 9. Dashboard, activité et exploitation (phases 8–11)
+
+- **Dashboard projet** (`/projets/:id/tableau-de-bord`) : progression, planning, retards, preuves,
+  dépenses récentes et résumé budgétaire calculés par l'API (`GET /api/projects/{id}/dashboard/`).
+  Les données financières et le journal ne sont visibles qu'avec les capacités correspondantes ;
+  cache serveur court avec repli si Redis est indisponible.
+- **Journal d'activité immuable** : écran paginé par projet, filtres par action, métadonnées
+  sensibles filtrées avant stockage ; lecture soumise à `view_activity`.
+- **Notifications in-app** : événements métier persistés en outbox, livraison Celery idempotente,
+  regroupement des alertes proches et lecture privée (`/api/notifications/`). Les alertes de
+  retard sont dédupliquées par projet et par journée locale.
+- **Opérations** : `/operations` réserve les métriques, l'état des tâches Celery et les événements
+  en attente aux administrateurs de plateforme ; les requêtes API sont mesurées sans conserver
+  URL complète, paramètres, corps ou identité utilisateur.
+
+### Préparer une mise en production
+
+Le stack de production se lance avec Docker Compose v2.24+ et des certificats provisionnés :
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Avant cela, renseigner dans `.env` un `SECRET_KEY` fort, le domaine (`ALLOWED_HOSTS`, origines
+CSRF/CORS), des identifiants PostgreSQL/Redis privés, ainsi que `SMS_PROVIDER=africastalking`,
+`SMS_USERNAME`, `SMS_API_KEY` et un `SMS_SENDER_ID` enregistré pour le Cameroun. L'intégration
+utilise l'API HTTPS Africa's Talking ; le fournisseur refuse le démarrage en production si ces
+paramètres manquent. Provisionner aussi `certs/fullchain.pem` et `certs/privkey.pem` (ou adapter
+`TLS_CERTS_DIR`). ClamAV est obligatoire en production et fourni par le Compose de production.
+Le compte de démonstration `seed_dev` ne doit jamais être créé sur une base réelle.
 
 ## 10. Documentation
 

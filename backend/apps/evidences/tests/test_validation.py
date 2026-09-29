@@ -225,7 +225,7 @@ def test_gallery_lists_evidence_with_statuses_and_counts(
     item = response.data["results"][0]
     assert item["status"] == "PENDING"
     assert item["status_label"] == "En attente de validation"
-    assert item["thumbnail_url"].endswith(f"/api/evidences/{evidence.pk}/thumbnail/")
+    assert item["thumbnail_url"].startswith("/api/media/")
     assert item["validation_count"] == 0
     assert response.data["counts"] == {"pending": 1, "validated": 0, "rejected": 0, "flagged": 0}
 

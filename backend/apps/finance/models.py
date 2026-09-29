@@ -45,6 +45,14 @@ class ExpenseStatus(models.TextChoices):
     CANCELLED = "CANCELLED", "Annulée"
 
 
+class ReceiptScanStatus(models.TextChoices):
+    PENDING = "PENDING", "En attente d'analyse"
+    SCANNING = "SCANNING", "Analyse en cours"
+    CLEAN = "CLEAN", "Contrôlé sans menace"
+    INFECTED = "INFECTED", "Fichier bloqué"
+    ERROR = "ERROR", "Analyse à relancer"
+
+
 class ExpenseAction(models.TextChoices):
     """Actions d'approbation : elles ne sont pas des statuts."""
 
@@ -177,6 +185,27 @@ class Expense(TimeStampedModel, SoftDeleteModel):
         "justificatif", upload_to="finance/receipts/", null=True, blank=True, max_length=255
     )
     receipt_hash = models.CharField("empreinte du justificatif", max_length=64, blank=True)
+    receipt_size_bytes = models.PositiveIntegerField("taille du justificatif", default=0)
+    receipt_content_type = models.CharField("MIME réel du justificatif", max_length=32, blank=True)
+    receipt_uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="justificatif déposé par",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_expense_receipts",
+    )
+    receipt_scan_status = models.CharField(
+        "analyse antivirus du justificatif",
+        max_length=16,
+        choices=ReceiptScanStatus.choices,
+        default=ReceiptScanStatus.PENDING,
+        db_index=True,
+    )
+    receipt_scan_result = models.CharField(
+        "résultat antivirus du justificatif", max_length=100, blank=True
+    )
+    receipt_scanned_at = models.DateTimeField("justificatif analysé le", null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         verbose_name="créée par",
@@ -211,6 +240,8 @@ class Expense(TimeStampedModel, SoftDeleteModel):
         indexes = [
             models.Index(fields=["project", "status", "deleted_at"]),
             models.Index(fields=["project", "incurred_on"]),
+            models.Index(fields=["receipt_scan_status", "updated_at"]),
+            models.Index(fields=["project", "receipt_scan_status"]),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - confort d'administration

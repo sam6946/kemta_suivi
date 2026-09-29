@@ -3,7 +3,11 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 import DashboardPage from "./pages/DashboardPage";
 import OrganizationsPage from "./pages/OrganizationsPage";
+import ProjectActivityPage from "./pages/ProjectActivityPage";
+import ProjectDashboardPage from "./pages/ProjectDashboardPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
+import NotificationsPage from "./pages/NotificationsPage";
+import OperationsPage from "./pages/OperationsPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import LoginPage from "./pages/LoginPage";
@@ -38,6 +42,8 @@ export default function App() {
           </RequireAuth>
         }
       />
+      <Route path="/notifications" element={<RequireAuth><NotificationsPage /></RequireAuth>} />
+      <Route path="/operations" element={<RequireAuth><OperationsPage /></RequireAuth>} />
       {/* Phase 3 — organisations, projets et membres */}
       <Route
         path="/organisations"
@@ -63,6 +69,8 @@ export default function App() {
           </RequireAuth>
         }
       />
+      <Route path="/projets/:id/tableau-de-bord" element={<RequireAuth><ProjectDashboardPage /></RequireAuth>} />
+      <Route path="/projets/:id/activite" element={<RequireAuth><ProjectActivityPage /></RequireAuth>} />
       {/* Phase 5 — preuves terrain : lien direct pour le terrain (même écran, ancre dédiée) */}
       <Route
         path="/projets/:id/preuves"

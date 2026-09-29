@@ -151,6 +151,9 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "invoice_date",
             "receipt_url",
             "receipt_hash",
+            "receipt_size_bytes",
+            "receipt_content_type",
+            "receipt_scan_status",
             "paid_amount",
             "outstanding_amount",
             "payments",
@@ -169,6 +172,9 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "currency",
             "status",
             "receipt_hash",
+            "receipt_size_bytes",
+            "receipt_content_type",
+            "receipt_scan_status",
             "paid_amount",
             "outstanding_amount",
             "payments",
@@ -194,8 +200,16 @@ class ExpenseSerializer(serializers.ModelSerializer):
         return int(obj.amount) - self.get_paid_amount(obj)
 
     def get_receipt_url(self, obj: Expense) -> str | None:
-        """Chemin **relatif** : il reste valable derrière un proxy (comme les preuves)."""
-        return f"/api/expenses/{obj.pk}/receipt/" if obj.receipt else None
+        """URL relative signée courte ; l'accès reste contrôlé à chaque lecture du jeton."""
+        if not obj.receipt:
+            return None
+        user = self.context.get("user")
+        if user is None or not getattr(user, "is_authenticated", False):
+            return f"/api/expenses/{obj.pk}/receipt/"
+        from apps.finance.media_tokens import issue_receipt_token
+
+        token = issue_receipt_token(expense=obj, user=user)
+        return f"/api/media/receipts/{token}/"
 
     def get_permissions(self, obj: Expense) -> dict:
         user = self.context.get("user")

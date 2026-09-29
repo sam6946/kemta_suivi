@@ -17,6 +17,7 @@ Contrats appliqués (voir `docs/api-contract.md` §6) :
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 from datetime import timedelta
 
@@ -27,18 +28,22 @@ from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.activity import log_event
 from apps.core.exceptions import KemtaAPIError
+from apps.core.metrics import increment_metric
 from apps.evidences.access import accessible_evidences
+from apps.evidences.media_tokens import verify_media_token
 from apps.evidences.models import (
     Evidence,
     EvidenceStatus,
+    MediaScanStatus,
     SyncStatus,
 )
+from apps.evidences.quotas import enforce_media_quota
 from apps.evidences.serializers import (
     EvidenceCreateSerializer,
     EvidenceSerializer,
@@ -52,6 +57,8 @@ from apps.evidences.tasks import generate_evidence_derivatives
 from apps.projects.access import accessible_projects, has_project_capability
 from apps.projects.models import Task
 from apps.users.roles import Capability
+
+logger = logging.getLogger("kemta.evidences")
 
 EXTENSION_BY_CONTENT_TYPE = {
     "image/jpeg": "jpg",
@@ -162,6 +169,9 @@ class EvidenceCreateView(APIView):
         task: Task | None = data.get("task")
 
         with transaction.atomic():
+            enforce_media_quota(
+                project_id=project.pk, actor_id=request.user.pk, new_size=len(payload)
+            )
             evidence = Evidence(
                 project=project,
                 author=request.user,
@@ -207,8 +217,17 @@ class EvidenceCreateView(APIView):
                 request=request,
             )
 
-        # 7. Dérivées hors du cycle de requête (eager en test, Celery en production).
-        generate_evidence_derivatives.delay(evidence.pk)
+        increment_metric("evidence_upload_total")
+        increment_metric("evidence_upload_bytes_total", len(payload))
+
+        # 7. Analyse antivirus et dérivées hors du cycle HTTP. Si Redis est indisponible,
+        # la preuve reste en quarantaine et une tâche planifiée la reprendra.
+        try:
+            generate_evidence_derivatives.delay(evidence.pk)
+        except Exception:
+            logger.warning(
+                "Analyse média de la preuve %s différée : broker indisponible", evidence.pk
+            )
 
         evidence.refresh_from_db()
         return Response(
@@ -261,8 +280,20 @@ class ProjectEvidenceListView(APIView):
 
         paginator = DefaultPagination()
         page = paginator.paginate_queryset(queryset.order_by("-captured_at", "-id"), request)
+        page = list(page)
+        from apps.projects.access import build_capabilities_map
+
+        capabilities = build_capabilities_map(
+            request.user, {evidence.project_id: evidence.project for evidence in page}.values()
+        )
         serializer = EvidenceSerializer(
-            page, many=True, context={"request": request, "user": request.user}
+            page,
+            many=True,
+            context={
+                "request": request,
+                "user": request.user,
+                "capabilities_by_project": capabilities,
+            },
         )
         payload = paginator.get_paginated_response(serializer.data).data
         payload["counts"] = {
@@ -306,12 +337,11 @@ class EvidenceHistoryView(APIView):
     def get(self, request, pk):
         evidence = get_object_or_404(accessible_evidences(request.user), pk=pk)
         validations = evidence.validations.select_related("actor").order_by("created_at", "id")
-        return Response(
-            {
-                "count": validations.count(),
-                "results": EvidenceValidationSerializer(validations, many=True).data,
-            }
-        )
+        from apps.core.pagination import DefaultPagination
+
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(validations, request)
+        return paginator.get_paginated_response(EvidenceValidationSerializer(page, many=True).data)
 
 
 class EvidenceTransitionView(APIView):
@@ -349,49 +379,86 @@ class EvidenceTransitionView(APIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
-class EvidenceFileView(APIView):
-    """`GET /api/evidences/{id}/file/` et `/thumbnail/` — accès contrôlé aux médias.
+def serve_evidence_media(evidence: Evidence, variant: str):
+    """Envoie une image déjà analysée ; les fichiers en quarantaine ne sont jamais accessibles."""
+    if evidence.scan_status != MediaScanStatus.CLEAN:
+        raise KemtaAPIError(
+            "media_scan_pending"
+            if evidence.scan_status != MediaScanStatus.INFECTED
+            else "media_blocked",
+            "Le fichier est indisponible tant que son analyse de sécurité n'est pas terminée.",
+            http_status=423,
+        )
 
-    Le fichier n'est jamais exposé par une URL publique : l'appartenance au projet est
-    vérifiée à chaque requête. En production, `MEDIA_X_ACCEL_REDIRECT` délègue l'envoi à
-    Nginx (la réponse est alors un `X-Accel-Redirect` vide de contenu).
-    """
+    if variant == "thumbnail" and evidence.thumbnail:
+        field = evidence.thumbnail
+        content_type = mimetypes.guess_type(field.name)[0] or "image/jpeg"
+    else:
+        field = evidence.file
+        content_type = evidence.content_type or mimetypes.guess_type(field.name)[0]
+    if not field:
+        raise KemtaAPIError("file_not_available", "Fichier indisponible.", http_status=404)
+
+    if settings.MEDIA_X_ACCEL_REDIRECT:
+        response = HttpResponse(status=200)
+        response["X-Accel-Redirect"] = f"/protected-media/{field.name}"
+        response["Content-Type"] = content_type or "application/octet-stream"
+    else:
+        response = FileResponse(
+            field.open("rb"), content_type=content_type or "application/octet-stream"
+        )
+        response["Content-Disposition"] = f'inline; filename="{field.name.rsplit("/", 1)[-1]}"'
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+class EvidenceFileView(APIView):
+    """`GET /api/evidences/{id}/file/` et `/thumbnail/` — accès JWT et périmètre projet."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, variant: str):
         evidence = get_object_or_404(accessible_evidences(request.user), pk=pk)
-        if variant == "thumbnail" and evidence.thumbnail:
-            field = evidence.thumbnail
-            # La miniature peut être un WebP (ou un JPEG de repli) : c'est son extension qui
-            # fait foi, jamais le type de la photo d'origine.
-            content_type = (
-                mimetypes.guess_type(field.name)[0]
-                or evidence.content_type
-                or "application/octet-stream"
+        return serve_evidence_media(evidence, variant)
+
+
+class SignedEvidenceMediaView(APIView):
+    """Accès image sans JWT via une URL signée à durée de vie courte (pour `<img src>`)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def get(self, request, token: str):
+        payload = verify_media_token(token)
+        if payload is None:
+            raise KemtaAPIError(
+                "signed_media_invalid", "Lien média invalide ou expiré.", http_status=404
             )
-        else:
-            field = evidence.file
-            content_type = (
-                evidence.content_type
-                or mimetypes.guess_type(field.name)[0]
-                or "application/octet-stream"
+
+        from apps.users.models import User
+
+        user = User.objects.filter(
+            pk=payload.get("user_id"),
+            is_active=True,
+            is_phone_verified=True,
+            deleted_at__isnull=True,
+        ).first()
+        if user is None:
+            raise KemtaAPIError(
+                "signed_media_invalid", "Lien média invalide ou expiré.", http_status=404
             )
-
-        if not field:
-            raise KemtaAPIError("file_not_available", "Fichier indisponible.", http_status=404)
-
-        if settings.MEDIA_X_ACCEL_REDIRECT:
-            response = HttpResponse(status=200)
-            response["X-Accel-Redirect"] = f"/protected-media/{field.name}"
-            response["Content-Type"] = content_type
-            return response
-
-        response = FileResponse(field.open("rb"), content_type=content_type)
-        response["Content-Disposition"] = f'inline; filename="{field.name.rsplit("/", 1)[-1]}"'
-        # Les preuves sont privées : aucun cache partagé ne doit les conserver.
-        response["Cache-Control"] = "private, max-age=300"
-        return response
+        evidence = (
+            accessible_evidences(user)
+            .filter(pk=payload.get("evidence_id"), project_id=payload.get("project_id"))
+            .first()
+        )
+        if evidence is None:
+            raise KemtaAPIError(
+                "signed_media_invalid", "Lien média invalide ou expiré.", http_status=404
+            )
+        return serve_evidence_media(evidence, payload["variant"])
 
 
 class EvidencePendingCountView(APIView):
@@ -416,14 +483,32 @@ class EvidencePendingCountView(APIView):
                 ) from exc
             queryset = queryset.filter(captured_at__lt=timezone.now() - timedelta(hours=hours))
 
-        # Seules les preuves que l'utilisateur a le droit de valider (capacité calculée).
-        validatable = [
-            evidence
-            for evidence in queryset.order_by("captured_at")
-            if has_project_capability(request.user, evidence.project, Capability.VALIDATE_EVIDENCE)
-            and evidence.author_id != request.user.pk
+        # Les capacités sont résolues une fois par projet, puis la pagination s'applique en SQL.
+        from apps.projects.access import build_capabilities_map
+
+        projects = list(accessible_projects(request.user).select_related("organization"))
+        capabilities = build_capabilities_map(request.user, projects)
+        valid_project_ids = [
+            project_id
+            for project_id, project_capabilities in capabilities.items()
+            if project_capabilities.get(Capability.VALIDATE_EVIDENCE, False)
         ]
-        serializer = EvidenceSerializer(
-            validatable, many=True, context={"request": request, "user": request.user}
+        queryset = (
+            queryset.filter(project_id__in=valid_project_ids)
+            .exclude(author_id=request.user.pk)
+            .prefetch_related("validations")
         )
-        return Response({"count": len(serializer.data), "results": serializer.data})
+        from apps.core.pagination import DefaultPagination
+
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(queryset.order_by("captured_at", "id"), request)
+        serializer = EvidenceSerializer(
+            page,
+            many=True,
+            context={
+                "request": request,
+                "user": request.user,
+                "capabilities_by_project": capabilities,
+            },
+        )
+        return paginator.get_paginated_response(serializer.data)

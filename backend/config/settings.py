@@ -39,6 +39,9 @@ ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS", default=["localhost", "127.0.0.1", "0.0.0.0", "testserver"]
 )
 ALLOWED_HOSTS += env.list("EXTRA_ALLOWED_HOSTS", default=[])
+if ENV == "local":
+    # Le proxy de prévisualisation Arena utilise des sous-domaines éphémères en développement.
+    ALLOWED_HOSTS.append(".e2b.app")
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
 # ---------------------------------------------------------------------------
@@ -62,11 +65,13 @@ INSTALLED_APPS = [
     "apps.evidences",
     "apps.sync",
     "apps.finance",
+    "apps.notifications.apps.NotificationsConfig",
 ]
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "django.middleware.gzip.GZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -74,6 +79,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.RequestIDMiddleware",
+    "apps.core.metrics.MetricsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -122,6 +128,7 @@ else:
 # Cache / Redis
 # ---------------------------------------------------------------------------
 REDIS_URL = env.str("REDIS_URL", default="redis://redis:6379/1")
+DASHBOARD_CACHE_TTL_SECONDS = env.int("DASHBOARD_CACHE_TTL_SECONDS", default=30)
 if IS_TEST or env.bool("USE_LOCAL_CACHE", default=False):
     CACHES = {
         "default": {
@@ -221,9 +228,27 @@ EMAIL_HOST_USER = env.str("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env.str("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 
-SMS_PROVIDER = env.str("SMS_PROVIDER", default="console")  # console | real
+SMS_PROVIDER = (
+    env.str("SMS_PROVIDER", default="console").strip().lower()
+)  # console | africastalking
 SMS_API_KEY = env.str("SMS_API_KEY", default="")
-SMS_SENDER_ID = env.str("SMS_SENDER_ID", default="KEMTA")
+SMS_USERNAME = env.str("SMS_USERNAME", default="")
+SMS_API_URL = env.str(
+    "SMS_API_URL", default="https://api.africastalking.com/version1/messaging/bulk"
+).strip()
+SMS_API_TIMEOUT_SECONDS = env.int("SMS_API_TIMEOUT_SECONDS", default=8)
+SMS_SENDER_ID = env.str("SMS_SENDER_ID", default="KEMTA").strip()
+if IS_PRODUCTION:
+    if SMS_PROVIDER not in {"africastalking", "real"}:
+        raise ImproperlyConfigured(
+            "SMS_PROVIDER doit être configuré sur africastalking en production."
+        )
+    if not SMS_API_KEY or not SMS_USERNAME or not SMS_SENDER_ID:
+        raise ImproperlyConfigured(
+            "SMS_API_KEY, SMS_USERNAME et SMS_SENDER_ID sont obligatoires en production."
+        )
+    if not SMS_API_URL.startswith("https://"):
+        raise ImproperlyConfigured("SMS_API_URL doit utiliser HTTPS en production.")
 
 # ---------------------------------------------------------------------------
 # Celery
@@ -236,6 +261,22 @@ CELERY_BEAT_SCHEDULE = {
     "purge-expired-otps": {
         "task": "apps.users.tasks.purge_expired_otps",
         "schedule": timedelta(hours=6),
+    },
+    "retry-business-event-outbox": {
+        "task": "apps.notifications.tasks.retry_pending_business_events",
+        "schedule": timedelta(minutes=2),
+    },
+    "retry-pending-media-scans": {
+        "task": "apps.evidences.tasks.retry_pending_media_scans",
+        "schedule": timedelta(minutes=5),
+    },
+    "emit-project-delay-events": {
+        "task": "apps.notifications.tasks.emit_project_delay_events",
+        "schedule": timedelta(hours=24),
+    },
+    "purge-old-celery-task-logs": {
+        "task": "apps.notifications.tasks.purge_task_logs",
+        "schedule": timedelta(days=1),
     },
 }
 
@@ -257,6 +298,17 @@ STATIC_URL = "static/"
 STATIC_ROOT = env.str("STATIC_ROOT", default=str(ROOT_DIR / "var" / "static"))
 
 MAX_UPLOAD_SIZE_MB = env.int("MAX_UPLOAD_SIZE_MB", default=10)
+MAX_MEDIA_USER_QUOTA_MB = env.int("MAX_MEDIA_USER_QUOTA_MB", default=512)
+MAX_MEDIA_PROJECT_QUOTA_MB = env.int("MAX_MEDIA_PROJECT_QUOTA_MB", default=5120)
+SIGNED_MEDIA_TOKEN_TTL_SECONDS = env.int("SIGNED_MEDIA_TOKEN_TTL_SECONDS", default=300)
+ANTIVIRUS_REQUIRED = env.bool("ANTIVIRUS_REQUIRED", default=IS_PRODUCTION)
+CLAMAV_HOST = env.str("CLAMAV_HOST", default="")
+CLAMAV_PORT = env.int("CLAMAV_PORT", default=3310)
+CLAMAV_TIMEOUT_SECONDS = env.int("CLAMAV_TIMEOUT_SECONDS", default=5)
+if IS_PRODUCTION and not ANTIVIRUS_REQUIRED:
+    raise ImproperlyConfigured("ANTIVIRUS_REQUIRED doit être True en production.")
+if IS_PRODUCTION and not CLAMAV_HOST:
+    raise ImproperlyConfigured("CLAMAV_HOST doit désigner le moteur antivirus en production.")
 
 # Preuves terrain (MVP-007 / MVP-008)
 # Le contrôle de périmètre refuse (422) une photo prise manifestement hors chantier ; il peut

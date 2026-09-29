@@ -420,13 +420,20 @@ def test_receipt_is_stored_hashed_and_served_privately(
         f"/api/expenses/{expense.pk}/receipt/", {"file": receipt()}, format="multipart"
     )
     assert upload.status_code == 201, upload.data
-    assert upload.data["receipt_url"] == f"/api/expenses/{expense.pk}/receipt/"
+    assert upload.data["receipt_url"].startswith("/api/media/receipts/")
     assert len(upload.data["receipt_hash"]) == 64  # SHA-256 hexadécimal
+
+    signed_download = client.get(upload.data["receipt_url"])
+    assert signed_download.status_code == 200
+    assert signed_download["Content-Type"] == "application/pdf"
+    assert signed_download["Cache-Control"] == "private, no-store"
+    signed_payload = b"".join(signed_download.streaming_content)
+    assert signed_payload.startswith(b"%PDF-")
 
     download = client.get(f"/api/expenses/{expense.pk}/receipt/")
     assert download.status_code == 200
     assert download["Content-Type"] == "application/pdf"
-    assert download["Cache-Control"] == "private, max-age=60"
+    assert download["Cache-Control"] == "private, no-store"
     assert "inline" in download["Content-Disposition"]
     payload = b"".join(download.streaming_content)
     assert payload.startswith(b"%PDF-")
@@ -468,7 +475,7 @@ def test_receipt_content_is_validated(
         format="multipart",
     )
     assert jpeg.status_code == 201, jpeg.data
-    assert jpeg.data["receipt_url"].endswith(f"/api/expenses/{expense.pk}/receipt/")
+    assert jpeg.data["receipt_url"].startswith("/api/media/receipts/")
 
 
 @pytest.mark.django_db

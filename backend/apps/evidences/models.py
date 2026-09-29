@@ -59,6 +59,14 @@ class ValidationAction(models.TextChoices):
     REOPEN = "REOPEN", "Réouverture"
 
 
+class MediaScanStatus(models.TextChoices):
+    PENDING = "PENDING", "En attente d'analyse"
+    SCANNING = "SCANNING", "Analyse en cours"
+    CLEAN = "CLEAN", "Contrôlé sans menace"
+    INFECTED = "INFECTED", "Fichier bloqué"
+    ERROR = "ERROR", "Analyse à relancer"
+
+
 # Transitions autorisées : la machine à états est explicite et testée.
 ALLOWED_TRANSITIONS: dict[str, dict[str, str]] = {
     EvidenceStatus.PENDING: {
@@ -164,6 +172,15 @@ class Evidence(TimeStampedModel, SoftDeleteModel):
     idempotency_key = models.CharField("clé d'idempotence", max_length=64)
     size_bytes = models.PositiveIntegerField("taille (octets)", default=0)
     content_type = models.CharField("type MIME détecté", max_length=32, blank=True)
+    scan_status = models.CharField(
+        "analyse antivirus",
+        max_length=16,
+        choices=MediaScanStatus.choices,
+        default=MediaScanStatus.PENDING,
+        db_index=True,
+    )
+    scan_result = models.CharField("résultat antivirus", max_length=100, blank=True)
+    scanned_at = models.DateTimeField("analysé le", null=True, blank=True)
 
     class Meta:
         verbose_name = "preuve terrain"
@@ -183,6 +200,7 @@ class Evidence(TimeStampedModel, SoftDeleteModel):
         ]
         indexes = [
             models.Index(fields=["project", "status", "deleted_at"]),
+            models.Index(fields=["project", "scan_status"]),
             models.Index(fields=["author", "created_at"]),
             models.Index(fields=["captured_at"]),
         ]

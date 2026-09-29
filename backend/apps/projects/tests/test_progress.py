@@ -334,6 +334,38 @@ def test_delays_endpoint_lists_late_items_with_reasons(auth_client, project, pro
 
 
 @pytest.mark.django_db
+def test_schedule_and_delays_bound_large_collections(auth_client, project, project_context):
+    """Les vues agrégées refusent proprement les volumes dépassant leurs plafonds."""
+    owner = project_context["owner"]
+    Task.objects.bulk_create(
+        [
+            Task(
+                project=project,
+                title=f"Tâche en retard {index}",
+                planned_end_date=TODAY - timedelta(days=1),
+                created_by=owner,
+            )
+            for index in range(501)
+        ],
+        batch_size=200,
+    )
+    client = auth_client(owner)
+
+    schedule = client.get(f"/api/projects/{project.id}/schedule/")
+    delays = client.get(f"/api/projects/{project.id}/delays/")
+
+    assert schedule.status_code == 422
+    assert schedule.data["error"]["code"] == "schedule_too_large"
+    assert schedule.data["error"]["details"]["tasks_total"] == 501
+    assert delays.status_code == 422
+    assert delays.data["error"]["code"] == "schedule_too_large"
+    assert delays.data["error"]["details"]["tasks_total"] == 501
+    assert delays.data["error"]["details"]["paginated_endpoints"]["tasks"] == (
+        f"/api/projects/{project.id}/tasks/"
+    )
+
+
+@pytest.mark.django_db
 def test_schedule_is_scoped_and_readable_by_any_member(auth_client, project, project_context):
     """Un investisseur lit le planning ; un étranger reçoit 404 (hors périmètre)."""
     assert (

@@ -25,6 +25,10 @@ coverage/
 playwright-report/
 test-results/
 
+# TLS certificates and ACME challenges (deployment secrets/artifacts)
+/certs/
+/certbot/
+
 # Éditeurs / OS
 .idea/
 .vscode/

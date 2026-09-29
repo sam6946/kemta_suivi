@@ -14,9 +14,15 @@ from apps.finance.views import (
     ProjectAdjustmentView,
     ProjectFinanceSummaryView,
     ProjectTransactionsView,
+    SignedExpenseReceiptView,
 )
 
 urlpatterns = [
+    path(
+        "media/receipts/<str:token>/",
+        SignedExpenseReceiptView.as_view(),
+        name="signed-expense-receipt",
+    ),
     path(
         "projects/<int:pk>/budget-lines/",
         BudgetLineListCreateView.as_view(),

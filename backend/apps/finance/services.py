@@ -259,6 +259,17 @@ def _log_threshold_crossing(
             },
             request=request,
         )
+        from apps.notifications.models import BusinessEventType
+        from apps.notifications.services import emit_business_event
+
+        emit_business_event(
+            BusinessEventType.BUDGET_THRESHOLD_REACHED,
+            actor=actor,
+            project=project,
+            entity_type="Project",
+            entity_id=project.pk,
+            payload={"threshold_percent": 80, "consumption_rate": str(after)},
+        )
     if before < FULL_RATE <= after:
         log_event(
             "BUDGET_EXCEEDED",
@@ -274,6 +285,17 @@ def _log_threshold_crossing(
                 "planned": int(project.budget_total),
             },
             request=request,
+        )
+        from apps.notifications.models import BusinessEventType
+        from apps.notifications.services import emit_business_event
+
+        emit_business_event(
+            BusinessEventType.BUDGET_THRESHOLD_REACHED,
+            actor=actor,
+            project=project,
+            entity_type="Project",
+            entity_id=project.pk,
+            payload={"threshold_percent": 100, "consumption_rate": str(after)},
         )
 
 
@@ -798,6 +820,18 @@ def transition_expense(
             metadata=metadata,
             request=request,
         )
+        if action == "SUBMIT":
+            from apps.notifications.models import BusinessEventType
+            from apps.notifications.services import emit_business_event
+
+            emit_business_event(
+                BusinessEventType.EXPENSE_SUBMITTED,
+                actor=actor,
+                project=project,
+                entity_type="Expense",
+                entity_id=expense.pk,
+                payload={"title": expense.title, "amount": int(expense.amount)},
+            )
         if action == "APPROVE":
             _log_threshold_crossing(
                 project=project,
@@ -1062,9 +1096,12 @@ def record_adjustment(*, project: Project, actor, data: dict, request=None) -> F
 
 # --------------------------------------------------------------------------- justificatifs
 def attach_receipt(*, expense: Expense, actor, upload, request=None) -> Expense:
-    """Attache (ou remplace) la facture justificative ; le contenu est vérifié côté serveur."""
+    """Attache (ou remplace) la facture ; MIME, taille, quota et antivirus sont vérifiés."""
     from django.core.files.base import ContentFile
 
+    from apps.core.metrics import increment_metric
+    from apps.evidences.quotas import enforce_media_quota
+    from apps.finance.models import ReceiptScanStatus
     from apps.finance.storage import (
         EXTENSION_BY_CONTENT_TYPE,
         read_and_validate_receipt,
@@ -1077,11 +1114,39 @@ def attach_receipt(*, expense: Expense, actor, upload, request=None) -> Expense:
         expense = locked_expense(expense.pk, project)
 
         payload, content_type = read_and_validate_receipt(upload)
+        enforce_media_quota(
+            project_id=project.pk,
+            actor_id=actor.pk,
+            new_size=len(payload),
+            exclude_expense_id=expense.pk,
+        )
+        old_receipt_name = expense.receipt.name if expense.receipt else ""
         extension = EXTENSION_BY_CONTENT_TYPE[content_type]
         filename = f"facture-{expense.pk}-{timezone.now():%Y%m%d%H%M%S}.{extension}"
         expense.receipt.save(filename, ContentFile(payload), save=False)
         expense.receipt_hash = sha256_of(payload)
-        expense.save(update_fields=["receipt", "receipt_hash", "updated_at"])
+        expense.receipt_size_bytes = len(payload)
+        expense.receipt_content_type = content_type
+        expense.receipt_uploaded_by = actor
+        expense.receipt_scan_status = ReceiptScanStatus.PENDING
+        expense.receipt_scan_result = ""
+        expense.receipt_scanned_at = None
+        expense.save(
+            update_fields=[
+                "receipt",
+                "receipt_hash",
+                "receipt_size_bytes",
+                "receipt_content_type",
+                "receipt_uploaded_by",
+                "receipt_scan_status",
+                "receipt_scan_result",
+                "receipt_scanned_at",
+                "updated_at",
+            ]
+        )
+        if old_receipt_name and old_receipt_name != expense.receipt.name:
+            storage = expense.receipt.storage
+            transaction.on_commit(lambda: storage.delete(old_receipt_name))
 
         log_event(
             "EXPENSE_RECEIPT_ATTACHED",
@@ -1094,8 +1159,22 @@ def attach_receipt(*, expense: Expense, actor, upload, request=None) -> Expense:
                 "title": expense.title,
                 "content_type": content_type,
                 "size_bytes": len(payload),
-                "sha256": expense.receipt_hash,
+                "sha256": expense.receipt_hash[:12],
             },
             request=request,
         )
-        return expense
+
+    increment_metric("receipt_upload_total")
+    increment_metric("receipt_upload_bytes_total", len(payload))
+
+    from apps.evidences.tasks import scan_expense_receipt
+
+    try:
+        scan_expense_receipt.delay(expense.pk)
+    except Exception:
+        import logging
+
+        logging.getLogger("kemta.finance").warning(
+            "Analyse antivirus du justificatif de dépense %s différée", expense.pk
+        )
+    return expense

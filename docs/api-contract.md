@@ -200,7 +200,7 @@ projet visible mais action interdite → `403`. Voir `docs/flows/project.md` §3
 **Erreurs spécifiques** : `dependent_not_in_project` et `dependency_not_in_project` → `400`
 (champ `depends_on`) · `dependency_cycle` → `409` · `invalid_status`, `invalid_ordering` → `400` ·
 dates incohérentes et avancement hors bornes → `400` avec le champ concerné ·
-`permission_denied` → `403` (projet visible) · projet hors périmètre → `404`.
+`permission_denied` → `403` (projet visible) · projet hors périmètre → `404` ; les vues agrégées `/schedule/` et `/delays/` sont bornées à 100 jalons et 500 tâches. Au-delà, `schedule_too_large` → `422` renvoie les volumes, limites et URLs paginées des jalons/tâches.
 
 **Avancement** : calculé côté serveur à chaque écriture (voir `docs/flows/planning.md` §3) ;
 `progress` du projet est en lecture seule. Chaque écriture de jalon ou de tâche renvoie le champ
@@ -218,7 +218,8 @@ requêtes (`test_schedule_has_no_n_plus_one`).
 | `GET` | `/api/evidences/{id}/history/` | historique paginé des décisions (append-only) |
 | `POST` | `/api/evidences/{id}/transition/` | `{ "action": "VALIDATE"\|"REJECT"\|"FLAG"\|"REOPEN", "comment": "…" }` |
 | `GET` | `/api/evidences/{id}/file/` | fichier d'origine, accès contrôlé par appartenance au projet |
-| `GET` | `/api/evidences/{id}/thumbnail/` | miniature (WebP, JPEG de repli) — retombe sur l'original tant qu'elle n'est pas prête |
+| `GET` | `/api/evidences/{id}/thumbnail/` | miniature (WebP, JPEG de repli) avec JWT |
+| `GET` | `/api/media/{token}/` | média signé à durée courte, pour `<img>` sans en-tête JWT ; scan `CLEAN` requis |
 | `GET` | `/api/evidences/pending/` | file d'attente du validateur, tous projets confondus ; `?older_than_hours=` |
 | `POST` | `/api/sync/batch/` | **Phase 6 (MVP-009)** : reprise de synchronisation par lot, mêmes clés d'idempotence (voir §6.1) |
 
@@ -231,10 +232,14 @@ projet a des coordonnées. Le nom du fichier envoyé est ignoré : le chemin est
 `Idempotency-Replayed: true` et **la même preuve** : un envoi réessayé après une coupure réseau
 n'est jamais dupliqué.
 
-**URLs de fichiers** : `file_url` et `thumbnail_url` sont des **chemins relatifs**
-(`/api/evidences/{id}/file/`) ; le client les résout sur son propre hôte, ce qui reste valable
-derrière un proxy. Les réponses sont `Cache-Control: private` (jamais de cache partagé) et, si
-`MEDIA_X_ACCEL_REDIRECT` est actif, le corps est délégué à Nginx (`X-Accel-Redirect`).
+**URLs média** : `file_url` et `thumbnail_url` sont des chemins relatifs signés
+(`/api/media/{token}/`) pour l'affichage direct dans `<img>`. Le jeton est lié à l'utilisateur et à
+la preuve, expire après `SIGNED_MEDIA_TOKEN_TTL_SECONDS` (300 s par défaut), et l'accès au projet
+est revalidé à chaque requête ; aucun jeton JWT n'est exposé à l'élément HTML. Les liens invalides
+ou expirés renvoient `404`. Les réponses média sont `Cache-Control: private, no-store`,
+`Referrer-Policy: no-referrer` et `X-Content-Type-Options: nosniff` ; avec
+`MEDIA_X_ACCEL_REDIRECT`, seul le corps est délégué à Nginx après contrôle d'accès. Les médias dont
+le scan ClamAV n'est pas `CLEAN` renvoient `423 media_scan_pending`/`media_blocked`.
 
 | Code | HTTP | Sens |
 |---|---|---|
@@ -412,57 +417,104 @@ l'autorité du serveur) ; l'interface l'annonce explicitement. Voir `docs/flows/
 
 ## 8. Dashboard agrégé (Phase 8 — MVP-011)
 
-`GET` **`/api/projects/{id}/dashboard/`** (endpoint agrégé, une seule requête) ·
-`GET` `/api/projects/{id}/activity/` (journal paginé).
+`GET /api/projects/{id}/dashboard/` renvoie les agrégats projet en une requête HTTP ; les
+compteurs sont calculés par l'API et le cache serveur a une durée courte configurable
+(`DASHBOARD_CACHE_TTL_SECONDS`, 30 s par défaut). Le cache est ignoré sans bloquer la réponse si
+Redis est indisponible. L'accès est borné au périmètre du membre.
 
-### `GET /api/projects/{id}/dashboard/` — réponse (cible)
+`GET /api/projects/{id}/activity/` renvoie le journal append-only paginé, filtrable par
+`?action=...` ; capacité `view_activity` requise.
+
+Exemple représentatif (valeurs financières/activité présentes uniquement si autorisées) :
+
 ```json
 {
-  "project": { "id", "name", "status", "currency": "XAF", "progress": 62 },
-  "budget": { "planned": 50000000, "consumed": 31250000, "balance": 18750000,
-              "consumption_rate": 62.5, "threshold_reached": false },
-  "milestones": { "last": { "title", "status", "planned_date", "actual_date" },
-                  "next": { "title", "status", "planned_date", "days_remaining": 12 },
-                  "late_count": 1 },
+  "project": { "id": 12, "name": "Résidence Bonamoussadi", "code": "RBS-T1",
+    "status": "ACTIVE", "currency": "XAF", "progress": 62, "budget_total": 50000000 },
+  "milestones": { "total": 12, "done": 7, "late": 1,
+    "last": { "id": 4, "title": "Fondations", "status": "DONE", "actual_date": "2026-05-02" },
+    "next": { "id": 5, "title": "Élévation", "status": "IN_PROGRESS",
+      "planned_date": "2026-10-12", "days_remaining": 13 } },
   "tasks": { "total": 48, "done": 30, "late": 3 },
-  "evidence": { "total": 120, "pending": 4, "validated": 108, "rejected": 6, "flagged": 2,
-                "recent": [ { "id", "thumbnail", "status", "captured_at", "author" } ] },
-  "expenses": { "recent": [ { "id", "title", "amount", "status", "incurred_on" } ] },
-  "alerts": [ { "code": "PROJECT_DELAYED", "severity": "warning", "message": "…", "since": "…" } ],
-  "activity": [ { "id", "action", "actor", "created_at", "entity" } ],
-  "permissions": { "can_validate_evidence": true, "can_manage_finance": false,
-                   "can_edit_schedule": true },
-  "generated_at": "2026-01-15T09:12:03Z"
+  "evidence": { "total": 120, "counts": { "PENDING": 4, "VALIDATED": 108 },
+    "recent": [{ "id": 99, "status": "VALIDATED", "captured_at": "2026-09-25T11:00:00Z",
+      "author": { "id": 7, "first_name": "Ariane", "last_name": "Etoa" },
+      "thumbnail": "/api/media/<jeton-signe>/" }] },
+  "budget": { "planned": 50000000, "allocated": 45000000, "committed": 31250000,
+    "paid": 22000000, "outstanding": 9250000, "balance": 18750000,
+    "consumption_rate": 62.5, "threshold": "OK", "currency": "XAF", "alerts": [] },
+  "expenses": { "recent": [], "count": 8, "pending_review": 1 },
+  "alerts": [], "activity": [],
+  "permissions": { "view_finance": true, "view_activity": true,
+    "capture_evidence": true, "validate_evidence": true },
+  "generated_at": "2026-09-29T09:12:03+00:00"
 }
 ```
-Le bloc `budget` s'appuie déjà sur la synthèse de la phase 7 (`F16`) : mêmes calculs, mêmes
-alertes, aucune divergence possible.
+Le bloc `budget` provient de la même synthèse métier que F16. Sans `view_finance`, `budget` vaut
+`null` et `expenses` est vide ; sans `view_activity`, `activity` est vide. La visibilité des blocs
+n'est jamais décidée par le frontend.
 
-## 9. Santé et exploitation (Phase 1/11)
+## 9. Journal et notifications (phases 9–10)
 
-`GET /api/health/` → `200` si tout va bien, `503` sinon :
+| Méthode | Endpoint | Permission / effet |
+|---|---|---|
+| `GET` | `/api/projects/{id}/activity/?page=&page_size=&action=` | `view_activity`, journal paginé filtrable |
+| `GET` | `/api/notifications/?unread=1&page=` | notifications propres au compte + `unread_count` |
+| `GET` | `/api/notifications/unread-count/` | nombre de notifications non lues du compte |
+| `POST` | `/api/notifications/{id}/read/` | marque l'élément du compte courant comme lu |
+| `POST` | `/api/notifications/read-all/` | marque les notifications non lues du compte comme lues |
+
+Les événements métier persistés dans l'outbox incluent `MILESTONE_VALIDATED`, `EXPENSE_SUBMITTED`,
+`EVIDENCE_REJECTED`, `BUDGET_THRESHOLD_REACHED` et `PROJECT_DELAYED`. Ils sont distribués par
+Celery après commit, avec déduplication idempotente ; les notifications sont privées, regroupées
+par destinataire/projet/événement sur une fenêtre de 24 h et n'incluent jamais de secret. Les
+alertes de retard sont émises au plus une fois par projet et par journée locale.
+
+## 10. Santé, métriques et opérations (phases 1/11)
+
+`GET /api/health/` → `200` si l'application, PostgreSQL et Redis sont disponibles, `503` sinon :
 ```json
 { "status": "ok", "app": "ok", "database": "ok", "redis": "ok",
   "version": "1.0.0", "environment": "production", "checks_ms": { "database": 3, "redis": 1 } }
 ```
-Aucun secret, aucune donnée métier. `/api/health/` n'est **pas** authentifié mais n'expose rien
-de sensible (pas de version de librairies, pas de DEBUG).
+Le healthcheck est public et sans secret. `GET /api/metrics/` donne un snapshot JSON des requêtes,
+latences, erreurs, uploads, scans, synchronisation et états Celery ; il est réservé à
+l'administrateur plateforme. Les métriques n'incluent pas URL brute, query-string, utilisateur ou
+corps de requête.
 
-## 10. Outils de développement (jamais en production)
+| Méthode | Endpoint | Permission / effet |
+|---|---|---|
+| `GET` | `/api/operations/` | admin plateforme ; états Celery, événements en attente, métriques API |
+| `GET` | `/api/operations/tasks/?state=&name=&page=` | admin plateforme ; journal paginé et filtrable des tâches |
+
+## 11. Fournisseur SMS et déploiement
+
+En local/test, `SMS_PROVIDER=console` met les messages dans l'outbox de développement ; aucun OTP
+n'est écrit dans les logs. En production, `SMS_PROVIDER=africastalking` active l'API HTTPS
+`https://api.africastalking.com/version1/messaging/bulk` (URL configurable), au moyen des variables
+`SMS_USERNAME`, `SMS_API_KEY`, `SMS_SENDER_ID` et `SMS_API_TIMEOUT_SECONDS`. Le code accepte les
+réponses fournisseur `100` (processed), `101` (sent) et `102` (queued) ; les refus/erreurs sont
+retentés par Celery sans inscrire numéro, clé ou contenu du message dans les logs. La configuration
+production échoue au démarrage si le fournisseur ou HTTPS n'est pas configuré. Le compte, le
+solde, le KYC et l'enregistrement du sender ID au Cameroun relèvent du déploiement.
+
+Le stack de production se lance avec Docker Compose v2.24+ :
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Les domaines,
+secrets, certificats TLS et ClamAV doivent être configurés avant ouverture publique ; ne jamais
+lancer `seed_dev` sur une base de production.
+
+## 12. Outils de développement (jamais en production)
 
 | Méthode | Endpoint | Disponibilité | Description |
 |---|---|---|---|
-| `GET` | `/api/dev/outbox/` | **développement uniquement** | Derniers messages SMS/email émis par l'adaptateur console (test du parcours OTP/réinitialisation sans téléphone) |
+| `GET` | `/api/dev/outbox/` | **développement uniquement** | Derniers messages de l'adaptateur console pour tester OTP/réinitialisation sans téléphone |
 
-Désactivé dès que `DEBUG=false` ou `DJANGO_ENV=production` : la route renvoie alors **404**
-(l'existence de l'endpoint n'est pas révélée). La réponse ne contient que les messages destinés
-à l'utilisateur, aucun secret technique.
+Désactivé dès que `DEBUG=false` ou `DJANGO_ENV=production` : la route renvoie alors **404**.
 
-## 11. Règles transverses
+## 13. Règles transverses
 
 - Toute action sensible produit un `ActivityLog` (liste fermée, cf. `data-model.md` §7).
-- Toute collection est paginée ; les curseurs/alternatives sont interdits sans ADR.
-- Les listes utilisent `select_related`/`prefetch_related` documentés ; les tests assertions
-  comptent les requêtes (`django_assert_num_queries`).
-- Aucune boucle de polling < 30 s côté frontend (exigence MVP-011) : rafraîchissement manuel,
-  revalidation au focus, ou SSE/Push ultérieurement.
+- Toute collection est paginée ; les listes principales sont couvertes par des tests anti-N+1.
+- Les erreurs portent un `request_id` ; OTP, mots de passe, jetons et données de fichiers ne sont
+  jamais enregistrés dans les logs.
+- Le frontend ne met jamais en file silencieusement une opération financière ou d'authentification.

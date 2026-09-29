@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.core.exceptions import KemtaAPIError
+from apps.evidences.media_tokens import issue_media_token
 from apps.evidences.models import Evidence, EvidenceValidation, GpsStatus
 from apps.projects.access import has_project_capability
 from apps.projects.models import Project, Task
@@ -90,6 +91,8 @@ class EvidenceSerializer(serializers.ModelSerializer):
             "hash_sha256",
             "size_bytes",
             "content_type",
+            "scan_status",
+            "scanned_at",
             "file_url",
             "thumbnail_url",
             "distance_from_site_m",
@@ -100,11 +103,16 @@ class EvidenceSerializer(serializers.ModelSerializer):
         ]
 
     def _url(self, name: str, obj: Evidence) -> str:
-        """Chemin **relatif** : l'application cliente le résout sur son propre hôte.
-
-        Une URL absolue construite depuis la requête casserait l'accès aux fichiers derrière un
-        proxy (le navigateur du terrain n'est jamais sur le domaine interne de l'API).
-        """
+        """URL relative signée, utilisable par `<img>` sans jeton JWT en stockage local."""
+        user = self.context.get("user")
+        if user is None:
+            request = self.context.get("request")
+            user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            token = issue_media_token(evidence=obj, user=user, variant=name)
+            return f"/api/media/{token}/"
+        # Repli pour les sérialisations internes : aucun consommateur public ne doit exposer
+        # directement cette URL sans authentification.
         return f"/api/evidences/{obj.pk}/{name}/"
 
     def get_file_url(self, obj: Evidence) -> str:
@@ -144,20 +152,23 @@ class EvidenceSerializer(serializers.ModelSerializer):
         return distance <= obj.project.geofence_radius_m
 
     def get_permissions(self, obj: Evidence) -> dict:
-        """Capacités **calculées par le backend** pour cette preuve et cet utilisateur."""
+        """Capacités backend, vectorisées lorsqu'une page contient plusieurs preuves."""
         user = self.context.get("user")
         if user is None:
             return {}
-        may_validate = has_project_capability(user, obj.project, Capability.VALIDATE_EVIDENCE)
+        capabilities_map = self.context.get("capabilities_by_project")
+        if capabilities_map is None:
+            may_validate = has_project_capability(user, obj.project, Capability.VALIDATE_EVIDENCE)
+            may_view_activity = has_project_capability(user, obj.project, Capability.VIEW_ACTIVITY)
+        else:
+            project_capabilities = capabilities_map.get(obj.project_id, {})
+            may_validate = project_capabilities.get(Capability.VALIDATE_EVIDENCE, False)
+            may_view_activity = project_capabilities.get(Capability.VIEW_ACTIVITY, False)
         is_author = obj.author_id == getattr(user, "pk", None)
         return {
             "validate_evidence": bool(may_validate and not is_author),
             "cannot_validate_own": bool(may_validate and is_author),
-            "can_see_location": bool(
-                may_validate
-                or has_project_capability(user, obj.project, Capability.VIEW_ACTIVITY)
-                or is_author
-            ),
+            "can_see_location": bool(may_validate or may_view_activity or is_author),
         }
 
     def get_validation_count(self, obj: Evidence) -> int:
