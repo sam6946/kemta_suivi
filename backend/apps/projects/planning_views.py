@@ -47,6 +47,9 @@ from apps.projects.services import (
 )
 from apps.users.roles import Capability
 
+MAX_SCHEDULE_MILESTONES = 100
+MAX_SCHEDULE_TASKS = 500
+
 TASK_ORDERING_FIELDS = {
     "planned_start_date",
     "-planned_start_date",
@@ -69,6 +72,29 @@ def accessible_tasks(user):
 
 def accessible_milestones(user):
     return Milestone.objects.filter(project__in=accessible_projects(user))
+
+
+def _require_bounded_plan(project, *, milestone_count: int, task_count: int) -> None:
+    """Refuse les vues agrégées trop lourdes; les collections détaillées sont paginées."""
+    if milestone_count <= MAX_SCHEDULE_MILESTONES and task_count <= MAX_SCHEDULE_TASKS:
+        return
+    raise KemtaAPIError(
+        "schedule_too_large",
+        "Ce planning dépasse la taille maximale de la vue agrégée. Consultez les jalons et les tâches via leurs listes paginées.",
+        http_status=422,
+        details={
+            "milestones_total": milestone_count,
+            "tasks_total": task_count,
+            "limits": {
+                "milestones": MAX_SCHEDULE_MILESTONES,
+                "tasks": MAX_SCHEDULE_TASKS,
+            },
+            "paginated_endpoints": {
+                "milestones": f"/api/projects/{project.pk}/milestones/",
+                "tasks": f"/api/projects/{project.pk}/tasks/",
+            },
+        },
+    )
 
 
 class PlanningBaseView(APIView):
@@ -94,8 +120,12 @@ class MilestoneListCreateView(PlanningBaseView):
             .prefetch_related("tasks")
             .order_by("order", "planned_date", "created_at")
         )
-        serializer = MilestoneSerializer(queryset, many=True, context={"request": request})
-        return Response({"count": len(serializer.data), "results": serializer.data})
+        from apps.core.pagination import DefaultPagination
+
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = MilestoneSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
 
     @transaction.atomic
     def post(self, request, pk):
@@ -197,11 +227,14 @@ class TaskListCreateView(PlanningBaseView):
             )
         queryset = queryset.order_by(ordering, "created_at")
 
+        from apps.core.pagination import DefaultPagination
+
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(queryset, request)
         serializer = TaskSerializer(
-            queryset, many=True, context={"request": request, "project": project}
+            page, many=True, context={"request": request, "project": project}
         )
-        data = serializer.data
-        return Response({"count": len(data), "results": data})
+        return paginator.get_paginated_response(serializer.data)
 
     @transaction.atomic
     def post(self, request, pk):
@@ -276,6 +309,10 @@ class ProjectScheduleView(PlanningBaseView):
 
     def get(self, request, pk):
         project = self.get_project(request, pk)
+        milestone_count = Milestone.objects.filter(project=project).count()
+        task_count = Task.objects.filter(project=project).count()
+        _require_bounded_plan(project, milestone_count=milestone_count, task_count=task_count)
+
         milestones = list(
             Milestone.objects.filter(project=project)
             # Les tâches, leurs responsables et leurs dépendances arrivent dans la même
@@ -363,17 +400,26 @@ class ProjectDelaysView(PlanningBaseView):
     def get(self, request, pk):
         project = self.get_project(request, pk)
         today = timezone.localdate()
-        late_tasks = list(
+        late_tasks_queryset = (
             Task.objects.filter(project=project, planned_end_date__lt=today)
             .exclude(status__in=FINAL_TASK_STATUSES)
             .select_related("milestone", "assignee")
             .order_by("planned_end_date")
         )
-        late_milestones = list(
+        late_milestones_queryset = (
             Milestone.objects.filter(project=project, planned_date__lt=today)
             .exclude(status__in=FINAL_STATUSES)
             .order_by("planned_date")
         )
+        late_task_count = late_tasks_queryset.count()
+        late_milestone_count = late_milestones_queryset.count()
+        _require_bounded_plan(
+            project,
+            milestone_count=late_milestone_count,
+            task_count=late_task_count,
+        )
+        late_tasks = list(late_tasks_queryset)
+        late_milestones = list(late_milestones_queryset)
         return Response(
             {
                 "project": project.id,

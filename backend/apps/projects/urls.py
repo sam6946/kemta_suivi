@@ -1,5 +1,7 @@
 from django.urls import path
 
+from apps.core.activity_views import ProjectActivityView
+
 from .planning_views import (
     MilestoneDetailView,
     MilestoneListCreateView,
@@ -9,6 +11,7 @@ from .planning_views import (
     TaskListCreateView,
 )
 from .views import (
+    ProjectDashboardView,
     ProjectDetailView,
     ProjectListCreateView,
     ProjectMemberDetailView,
@@ -17,6 +20,8 @@ from .views import (
 
 urlpatterns = [
     path("projects/", ProjectListCreateView.as_view(), name="project-list"),
+    path("projects/<int:pk>/dashboard/", ProjectDashboardView.as_view(), name="project-dashboard"),
+    path("projects/<int:pk>/activity/", ProjectActivityView.as_view(), name="project-activity"),
     path("projects/<int:pk>/", ProjectDetailView.as_view(), name="project-detail"),
     path(
         "projects/<int:pk>/members/",

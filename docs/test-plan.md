@@ -1,4 +1,4 @@
-# Plan de tests — KEMTA SUIVI (Phase 0)
+# Plan de tests — KEMTA SUIVI (phases 0–11)
 
 Objectif : chaque fonctionnalité ne passe « terminée » que si ses tests passent. Un test qui
 n'existe pas équivaut à un critère d'acceptation non mesuré.
@@ -19,17 +19,19 @@ Seuil de couverture backend : **85 %** sur `apps/`, blocage CI en dessous.
 ## 2. Commandes
 
 ```bash
-# backend (depuis backend/)
-pytest                       # tous les tests
-pytest --cov=apps --cov-report=term-missing
-pytest -m "not slow"
+# depuis backend/ (le venv est préparé par ./dev.sh)
+./.venv/bin/pytest
+./.venv/bin/pytest --cov=apps --cov-report=term-missing
+./.venv/bin/ruff check . && ./.venv/bin/ruff format --check .
 
-# frontend (depuis frontend/)
-npm test                     # vitest
-npm run test:e2e             # playwright (démarre le backend de test)
+# depuis frontend/
+npm test
+npm run lint
+npm run build
+npm run test:e2e             # Playwright + Chromium installés
 
-# tout (docker)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml exec web pytest
+# variante Docker (Compose de développement)
+docker compose exec web python -m pytest
 ```
 
 ## 3. Matrice de couverture (fonctionnalité → tests exigés)
@@ -49,7 +51,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml exec web pytest
 | **MVP-017 Reset mot de passe** | numéro inconnu (réponse neutre, pas d'énumération) · OTP invalide/expiré/réutilisé/autre `purpose` · max tentatives · renvoi limité · mot de passe faible · réutilisation du mot de passe courant · compte non confirmé · compte désactivé · **sessions révoquées après reset** · SMS de confirmation envoyé · journalisation des 5 événements · rate limiting · E2E « Mot de passe oublié ? » → reconnexion |
 | MVP-011 Dashboard | endpoint agrégé · `assert_num_queries` ≤ seuil · cohérence avec les calculs backend · alertes déterministes · collections limitées · états loading/empty/error/offline |
 | MVP-012 Journal | création d'événements pour chaque action sensible · protection contre suppression · accès réservé · pagination |
-| MVP-013 Médias | compression avant/après (taille mesurée, côté appareil) · miniature WebP 320 px + version liste JPEG 1080 px générées côté serveur · limites taille/type établies sur le contenu réel · antivirus/quotas et relance de tâche échouée en phase 10 |
+| MVP-013 Médias | compression appareil · signature binaire/taille/dimensions · scan ClamAV, quarantaine, quotas, URL signée, reprise de `SCANNING` · miniature WebP/JPEG asynchrone · tests dans `apps/evidences/tests/test_media_security.py` et `apps/finance/tests/test_media_security.py` |
 | MVP-014 Notifications | émission des 5 événements métier · regroupement · permissions de consultation |
 | Outils de développement | `/api/dev/outbox/` disponible en dev, **404** hors développement, aucun secret exposé |
 | MVP-015 Observabilité | `/health/` ok/dégradé (base ou Redis down) · erreurs structurées · **aucun secret ni OTP en clair dans les logs** |
@@ -71,17 +73,18 @@ démonstration correspondent exactement aux écritures.
 - **Aucune donnée mockée dans le parcours produit final** : la seed sert aux tests et aux démos,
   jamais à simuler une fonctionnalité manquante.
 
-## 5. E2E (MVP-016) — scénarios automatisés
+## 5. E2E (MVP-016) — état des scénarios
 
-1. inscription avec numéro → 2. validation OTP → 3. connexion → 4. ajout facultatif de l'email →
-5. création d'organisation → 6. création de projet → 7. ajout de membre → 8. création de jalon →
-9. capture de preuve → 10. validation de preuve → 11. création de dépense →
-12. consultation du dashboard → 13. passage offline → 14. synchronisation automatique →
-**15. réinitialisation du mot de passe après oubli**.
+Scénarios Playwright actuellement présents dans `frontend/e2e/mvp.spec.ts` :
 
-Exécution : `npm run test:e2e` dans un environnement documenté (backend de test + base SQLite +
-SMS console). Le scénario 13/14 utilise `context.setOffline(true)` de Playwright, ferme l'onglet,
-le rouvre, repasse en ligne et vérifie la synchronisation sans doublon.
+1. **MVP-017** : réinitialisation de mot de passe par OTP console, reconnexion avec le nouveau mot
+de passe, ouverture du dashboard projet sur viewport mobile.
+2. **MVP-001** : vérification de l'écran d'inscription sur viewport mobile et absence de champ email.
+
+Exécution : `npm run test:e2e` démarre le backend local et une base SQLite dédiée. Chromium doit
+être déjà installé (`npx playwright install chromium`). Les scénarios couvrant le flux complet
+offline/online, la création de chantier et la validation financière restent à ajouter ; les mêmes
+règles sont couvertes par des tests backend et Vitest, mais cela ne remplace pas encore un E2E.
 
 ## 6. Règles d'or
 

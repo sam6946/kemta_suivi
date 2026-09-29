@@ -67,6 +67,18 @@ def test_project_row_is_locked_during_a_payment(
 
 
 @pytest.mark.django_db
+def test_locked_expense_only_locks_its_row_when_budget_line_is_nullable(finance_context, expense):
+    """PostgreSQL must not try to lock the nullable side of `select_related(budget_line)`."""
+    if not connection.features.has_select_for_update_of:
+        pytest.skip("Ce moteur ne prend pas en charge SELECT FOR UPDATE OF (PostgreSQL).")
+
+    from apps.finance.services import locked_expense
+
+    locked = locked_expense(expense.pk, finance_context["project"])
+    assert locked.pk == expense.pk
+
+
+@pytest.mark.django_db
 def test_stale_outstanding_never_produces_an_incoherent_balance(
     auth_client, finance_context, project_context, expense, transition, pay
 ):

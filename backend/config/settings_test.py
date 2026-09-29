@@ -9,7 +9,7 @@ ENV = "test"
 DEBUG = False
 DJANGO_ENV = "test"
 
-SECRET_KEY = "test-only-insecure-key"
+SECRET_KEY = "test-only-insecure-secret-key-for-unit-tests"
 
 DATABASES = {
     "default": {
@@ -29,6 +29,7 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
 SMS_PROVIDER = "console"
+EMAIL_BACKEND_PROVIDER = "console"
 
 # Limite d'envoi volontairement basse en test : un seul mégaoctet suffit à vérifier le refus.
 MAX_UPLOAD_SIZE_MB = 1

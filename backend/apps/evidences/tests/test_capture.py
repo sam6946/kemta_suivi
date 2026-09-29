@@ -14,6 +14,7 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from PIL import Image
+from rest_framework.test import APIClient
 
 from apps.core.models import ActivityLog
 from apps.evidences.models import Evidence, GpsStatus
@@ -71,8 +72,15 @@ def test_agent_captures_a_photo_with_gps(auth_client, project, project_context, 
     assert response.data["device_model"] == "Tecno Spark 10"
     # Chemins **relatifs** : derrière un proxy, une URL absolue renverrait le navigateur du
     # terrain vers l'hôte interne de l'API.
-    assert response.data["file_url"] == f"/api/evidences/{response.data['id']}/file/"
-    assert response.data["thumbnail_url"] == f"/api/evidences/{response.data['id']}/thumbnail/"
+    assert response.data["file_url"].startswith("/api/media/")
+    assert response.data["thumbnail_url"].startswith("/api/media/")
+    anonymous = APIClient()
+    media_response = anonymous.get(response.data["file_url"])
+    thumbnail_response = anonymous.get(response.data["thumbnail_url"])
+    assert media_response.status_code == 200
+    assert media_response["Cache-Control"] == "private, no-store"
+    assert media_response["Referrer-Policy"] == "no-referrer"
+    assert thumbnail_response.status_code == 200
 
     evidence = Evidence.objects.get(pk=response.data["id"])
     # Le chemin est régénéré côté serveur : le nom envoyé par le client est ignoré.

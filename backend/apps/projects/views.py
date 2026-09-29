@@ -19,6 +19,7 @@ from apps.projects.access import (
     permissions_payload,
     resolve_capabilities,
 )
+from apps.projects.dashboard import project_dashboard
 from apps.projects.models import Project, ProjectMember, ProjectStatus
 from apps.projects.permissions import CanCreateProject
 from apps.projects.serializers import (
@@ -434,3 +435,15 @@ class ProjectMemberDetailView(APIView):
             request=request,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ProjectDashboardView(APIView):
+    """`GET /api/projects/{id}/dashboard/` — synthèse agrégée, autorisée et cachée."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        project = get_object_or_404(
+            accessible_projects(request.user).select_related("organization"), pk=pk
+        )
+        return Response(project_dashboard(project, request.user))

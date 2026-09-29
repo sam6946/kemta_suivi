@@ -144,6 +144,8 @@ export default function ProjectDetailPage() {
           </div>
         </div>
         <div className="links">
+          <Link to={`/projets/${id}/tableau-de-bord`}>Tableau de bord agrégé</Link>
+          {project.permissions.view_activity ? <Link to={`/projets/${id}/activite`}>Journal d'activité</Link> : null}
           <a href="#planning">Planning</a>
           <a href="#preuves">Preuves terrain</a>
           <a href="#finances">Finances</a>

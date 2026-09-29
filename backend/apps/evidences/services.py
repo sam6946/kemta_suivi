@@ -115,4 +115,16 @@ def apply_transition(
         },
         request=request,
     )
+    if action == "REJECT":
+        from apps.notifications.models import BusinessEventType
+        from apps.notifications.services import emit_business_event
+
+        emit_business_event(
+            BusinessEventType.EVIDENCE_REJECTED,
+            actor=actor,
+            project=evidence.project,
+            entity_type="Evidence",
+            entity_id=evidence.pk,
+            payload={"author_id": evidence.author_id},
+        )
     return evidence

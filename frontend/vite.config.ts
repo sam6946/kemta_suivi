@@ -1,6 +1,6 @@
 /// <reference types="vitest" />
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Le navigateur ne parle qu'au serveur Vite : /api est proxyfié vers Django.
 const API_TARGET = process.env.VITE_API_TARGET ?? "http://127.0.0.1:8000";
@@ -22,6 +22,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    exclude: [...configDefaults.exclude, "e2e/**"],
     css: false,
   },
 });

@@ -14,8 +14,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # PostgreSQL is reachable by other Compose services at db:5432. Do not publish
+    # it on the host by default: developers may already have a local PostgreSQL server.
 
   redis:
     image: redis:7-alpine

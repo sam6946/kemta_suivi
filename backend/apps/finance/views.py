@@ -11,11 +11,13 @@ Principes appliqués :
 
 from __future__ import annotations
 
+from django.conf import settings
 from django.db.models import Count, Sum
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -30,6 +32,7 @@ from apps.finance.models import (
     FinancialTransaction,
     Payment,
     PaymentMethod,
+    ReceiptScanStatus,
     TransactionType,
 )
 from apps.finance.serializers import (
@@ -96,9 +99,11 @@ class BudgetLineListCreateView(APIView):
     def get(self, request, pk):
         project = _accessible_project(request.user, pk)
         _require_view(request.user, project)
-        # `select_related("project")` : les permissions du sérialiseur ne doivent pas relire le projet.
-        lines = list(BudgetLine.objects.filter(project=project).select_related("project"))
-        # Nombre constant de requêtes, quelle que soit la taille du budget : jamais de N+1.
+        queryset = BudgetLine.objects.filter(project=project).select_related("project")
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        lines = list(page)
+        # Les agrégats sont regroupés par requête, sans N+1 même avec beaucoup de postes.
         counts = dict(
             Expense.objects.filter(project=project)
             .values_list("budget_line_id")
@@ -115,16 +120,12 @@ class BudgetLineListCreateView(APIView):
                 "finance_permissions_by_project": finance_permissions_map(request.user, [project]),
             },
         )
-        return Response(
-            {
-                "count": len(lines),
-                "results": serializer.data,
-                "summary": budget_summary(project),
-                "categories": [
-                    {"value": value, "label": label} for value, label in BudgetCategory.choices
-                ],
-            }
-        )
+        response = paginator.get_paginated_response(serializer.data)
+        response.data["summary"] = budget_summary(project)
+        response.data["categories"] = [
+            {"value": value, "label": label} for value, label in BudgetCategory.choices
+        ]
+        return response
 
     def post(self, request, pk):
         project = _accessible_project(request.user, pk)
@@ -309,20 +310,18 @@ class ExpensePaymentListCreateView(APIView):
         _require_view(request.user, expense.project)
         payments = expense.payments.select_related("created_by", "cancelled_by")
         totals = payment_totals(expense)
-        return Response(
-            {
-                "count": payments.count(),
-                "results": PaymentSerializer(payments, many=True).data,
-                "totals": {
-                    "amount": int(expense.amount),
-                    "paid": int(totals["paid"]),
-                    "outstanding": int(totals["outstanding"]),
-                },
-                "methods": [
-                    {"value": value, "label": label} for value, label in PaymentMethod.choices
-                ],
-            }
-        )
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(payments, request)
+        response = paginator.get_paginated_response(PaymentSerializer(page, many=True).data)
+        response.data["totals"] = {
+            "amount": int(expense.amount),
+            "paid": int(totals["paid"]),
+            "outstanding": int(totals["outstanding"]),
+        }
+        response.data["methods"] = [
+            {"value": value, "label": label} for value, label in PaymentMethod.choices
+        ]
+        return response
 
     def post(self, request, pk):
         expense = _expense_with_context(request.user, pk)
@@ -362,27 +361,88 @@ class PaymentCancelView(APIView):
         return Response(PaymentSerializer(payment).data)
 
 
+def serve_expense_receipt(expense: Expense):
+    """Envoie un justificatif uniquement après analyse antivirus propre."""
+    if not expense.receipt:
+        raise KemtaAPIError(
+            "receipt_not_available", "Aucun justificatif pour cette dépense.", http_status=404
+        )
+    if expense.receipt_scan_status != ReceiptScanStatus.CLEAN:
+        code = (
+            "media_blocked"
+            if expense.receipt_scan_status == ReceiptScanStatus.INFECTED
+            else "media_scan_pending"
+        )
+        raise KemtaAPIError(
+            code,
+            "Le justificatif est indisponible tant que son analyse de sécurité n'est pas terminée.",
+            http_status=423,
+        )
+    if settings.MEDIA_X_ACCEL_REDIRECT:
+        response = HttpResponse(status=200)
+        response["X-Accel-Redirect"] = f"/protected-media/{expense.receipt.name}"
+        response["Content-Type"] = expense.receipt_content_type or "application/octet-stream"
+    else:
+        response = FileResponse(
+            expense.receipt.open("rb"),
+            content_type=expense.receipt_content_type or "application/octet-stream",
+        )
+        response["Content-Disposition"] = (
+            f'inline; filename="{expense.receipt.name.rsplit("/", 1)[-1]}"'
+        )
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+class SignedExpenseReceiptView(APIView):
+    """Lien sans JWT pour l'affichage direct ; signature courte et accès revérifié."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def get(self, request, token: str):
+        from apps.finance.media_tokens import verify_receipt_token
+        from apps.users.models import User
+
+        payload = verify_receipt_token(token)
+        if payload is None:
+            raise KemtaAPIError(
+                "signed_media_invalid", "Lien média invalide ou expiré.", http_status=404
+            )
+        user = User.objects.filter(
+            pk=payload.get("user_id"),
+            is_active=True,
+            is_phone_verified=True,
+            deleted_at__isnull=True,
+        ).first()
+        if user is None:
+            raise KemtaAPIError(
+                "signed_media_invalid", "Lien média invalide ou expiré.", http_status=404
+            )
+        expense = (
+            accessible_expenses(user)
+            .filter(pk=payload.get("expense_id"), project_id=payload.get("project_id"))
+            .select_related("project")
+            .first()
+        )
+        if expense is None or not can_view_finance(user, expense.project):
+            raise KemtaAPIError(
+                "signed_media_invalid", "Lien média invalide ou expiré.", http_status=404
+            )
+        return serve_expense_receipt(expense)
+
+
 class ExpenseReceiptView(APIView):
     """`GET` / `POST /api/expenses/{id}/receipt/` — consultation et dépôt du justificatif."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        from django.http import FileResponse
-
         expense = _expense_with_context(request.user, pk)
         _require_view(request.user, expense.project)
-        if not expense.receipt:
-            raise KemtaAPIError(
-                "receipt_not_available", "Aucun justificatif pour cette dépense.", http_status=404
-            )
-        response = FileResponse(expense.receipt.open("rb"))
-        response["Content-Disposition"] = (
-            f'inline; filename="{expense.receipt.name.rsplit("/", 1)[-1]}"'
-        )
-        # Un justificatif financier est privé : jamais de cache partagé.
-        response["Cache-Control"] = "private, max-age=60"
-        return response
+        return serve_expense_receipt(expense)
 
     def post(self, request, pk):
         expense = _expense_with_context(request.user, pk)

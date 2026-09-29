@@ -25,6 +25,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.exceptions import KemtaAPIError
+from apps.core.metrics import increment_metric
 from apps.sync.idempotency import claim, mark_done
 from apps.sync.models import SyncOperation, SyncOperationStatus
 from apps.sync.operations import (
@@ -56,6 +57,10 @@ class SyncBatchView(APIView):
             counts[result["status"].lower()] += 1
             if result.get("replayed"):
                 counts["replayed"] += 1
+
+        increment_metric("sync_synced_total", counts["synced"])
+        increment_metric("sync_conflict_total", counts["conflict"])
+        increment_metric("sync_failed_total", counts["failed"])
 
         return Response(
             {

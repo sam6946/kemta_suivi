@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
 from .models import ActivityLog
 
@@ -23,6 +23,11 @@ FORBIDDEN_METADATA_KEYS = {
     "token",
     "access",
     "refresh",
+    "password_hash",
+    "code_hash",
+    "secret_key",
+    "api_key",
+    "authorization",
 }
 
 
@@ -35,10 +40,22 @@ def get_client_ip(request) -> str | None:
     return request.META.get("REMOTE_ADDR")
 
 
+def _clean_value(value):
+    if isinstance(value, dict):
+        return {
+            key: _clean_value(item)
+            for key, item in value.items()
+            if str(key).lower() not in FORBIDDEN_METADATA_KEYS
+        }
+    if isinstance(value, list):
+        return [_clean_value(item) for item in value]
+    return value
+
+
 def _clean_metadata(metadata: dict | None) -> dict:
     if not metadata:
         return {}
-    return {k: v for k, v in metadata.items() if k.lower() not in FORBIDDEN_METADATA_KEYS}
+    return _clean_value(metadata)
 
 
 def log_event(
@@ -59,7 +76,7 @@ def log_event(
     """
     actor_instance = actor if actor is not None and getattr(actor, "pk", None) else None
     try:
-        return ActivityLog.objects.create(
+        event = ActivityLog.objects.create(
             actor=actor_instance,
             action=action,
             entity_type=entity_type,
@@ -70,6 +87,11 @@ def log_event(
             ip_address=get_client_ip(request),
             user_agent=(request.META.get("HTTP_USER_AGENT", "")[:200] if request else ""),
         )
+        if project is not None:
+            from apps.core.cache_utils import invalidate_project_dashboard
+
+            transaction.on_commit(lambda: invalidate_project_dashboard(project.pk))
+        return event
     except IntegrityError:  # pragma: no cover - garde-fou
         logger.exception("Impossible d'écrire l'événement %s", action)
         return None

@@ -1,9 +1,4 @@
-/**
- * Tableau de bord minimal de la chaîne d'accès (phase 2).
- *
- * Le dashboard agrégé (MVP-011) arrive en phase 8 : ici on affiche le profil,
- * les capacités réellement accordées par le backend et l'ajout facultatif de l'email.
- */
+/** Tableau de bord personnel : accès aux projets, notifications et profil. */
 
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -11,6 +6,7 @@ import { Link } from "react-router-dom";
 import { authApi } from "../api/auth";
 import { ApiError } from "../api/client";
 import { organizationsApi } from "../api/organizations";
+import { notificationsApi } from "../api/notifications";
 import { projectsApi } from "../api/projects";
 import { useAuth } from "../auth/AuthContext";
 import { messageForErrorCode } from "../auth/passwordPolicy";
@@ -20,6 +16,7 @@ import { Alert, Button, Field } from "../components/ui";
 export default function DashboardPage() {
   const { user, logout, refreshProfile } = useAuth();
   const [counts, setCounts] = useState<{ projects: number; organizations: number } | null>(null);
+  const [unreadNotifications, setUnreadNotifications] = useState<number | null>(null);
   const [email, setEmail] = useState(user?.email ?? "");
   const [code, setCode] = useState("");
   const [stage, setStage] = useState<"idle" | "code">("idle");
@@ -40,6 +37,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void loadCounts();
+    notificationsApi
+      .unreadCount()
+      .then(({ unread_count }) => setUnreadNotifications(unread_count))
+      .catch(() => setUnreadNotifications(null));
   }, [loadCounts]);
 
   if (!user) return null;
@@ -110,10 +111,17 @@ export default function DashboardPage() {
         <div className="links" style={{ flexDirection: "row", gap: 16 }}>
           <Link to="/projets">Voir mes projets</Link>
           <Link to="/organisations">Mes organisations</Link>
+          <Link to="/notifications">
+            Notifications{unreadNotifications !== null ? ` (${unreadNotifications} non lue(s))` : ""}
+          </Link>
+          <Link to="/synchronisation">Synchronisation</Link>
+          {user.capabilities.includes("view_operations") ? (
+            <Link to="/operations">Outils d'exploitation</Link>
+          ) : null}
         </div>
         <p className="field-hint" style={{ marginTop: 12 }}>
-          Les indicateurs consolidés (avancement, budget consommé, alertes) arriveront avec
-          l'endpoint agrégé de la phase 8. Aucune valeur n'est simulée ici.
+          Ouvrez un projet pour consulter son avancement consolidé, ses alertes, ses finances et
+          son journal d'activité selon vos permissions.
         </p>
       </section>
 

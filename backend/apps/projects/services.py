@@ -51,6 +51,18 @@ def create_milestone(*, project, actor, data, request=None) -> tuple[Milestone, 
         },
         request=request,
     )
+    if milestone.status == "DONE":
+        from apps.notifications.models import BusinessEventType
+        from apps.notifications.services import emit_business_event
+
+        emit_business_event(
+            BusinessEventType.MILESTONE_VALIDATED,
+            actor=actor,
+            project=project,
+            entity_type="Milestone",
+            entity_id=milestone.pk,
+            payload={"title": milestone.title},
+        )
     return milestone, progress
 
 
@@ -83,6 +95,18 @@ def update_milestone(
         metadata={"changed": changed, "project_progress": str(progress)},
         request=request,
     )
+    if before["status"] != "DONE" and milestone.status == "DONE":
+        from apps.notifications.models import BusinessEventType
+        from apps.notifications.services import emit_business_event
+
+        emit_business_event(
+            BusinessEventType.MILESTONE_VALIDATED,
+            actor=actor,
+            project=project,
+            entity_type="Milestone",
+            entity_id=milestone.pk,
+            payload={"title": milestone.title},
+        )
     return milestone, progress
 
 

@@ -1,4 +1,4 @@
-# Architecture initiale — KEMTA SUIVI (Phase 0/1)
+# Architecture — KEMTA SUIVI (MVP, phases 0–11)
 
 ## 1. Vue d'ensemble
 
@@ -40,51 +40,53 @@
 | API | REST JSON (pas de GraphQL) | simplicité, cache HTTP, contrôle fin des permissions |
 | Auth | JWT (access 15 min + refresh 7 j rotatif) + OTP SMS | conforme aux flux du backlog |
 
-## 2. Docker Compose (développement)
+## 2. Docker Compose
 
-Services : `web` (Gunicorn/Django) · `worker` (Celery) · `beat` · `db` (postgres:16-alpine) ·
-`redis` (redis:7-alpine) · `frontend` (Vite dev server, HMR) · `nginx` (profils
-dev+prod). Un seul `docker compose up` démarre tout ; `docker compose exec web python manage.py
-migrate` applique les migrations sur une base vide.
+Développement : `db` (PostgreSQL 16), `redis` (Redis 7), `web` (Django), `worker`, `beat` et
+`frontend` (Vite/HMR). PostgreSQL reste privé sur le réseau Compose (`db:5432`) et n'occupe pas
+le port 5432 de l'hôte ; un shell SQL est accessible via `docker compose exec db psql -U kemta -d kemta`.
+La commande `./dev.sh` choisit Docker si le daemon est disponible, sinon elle démarre le backend
+SQLite et Vite localement. La seed `seed_dev` n'est destinée qu'au local.
 
-Volumes : `pgdata` (données), `media` (fichiers uploadés en dev). En production, le volume
-`media` est remplacé par un bucket S3-compatible (voir §4).
-
-Fichiers : `docker-compose.yml` (base) · `docker-compose.dev.yml` · `docker-compose.prod.yml` ·
-`backend/Dockerfile` · `frontend/Dockerfile` · `.env.example` (jamais de valeurs réelles).
-Les secrets ne sont **jamais** dans l'image : `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`,
-clés du fournisseur SMS viennent de l'environnement (ou d'un gestionnaire de secrets) et
-l'absence de `SECRET_KEY` en production fait **échouer le démarrage** (fail-fast).
+Production : superposer `docker-compose.prod.yml` à la base avec
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Docker Compose
+v2.24+ est requis pour `!reset`, qui retire les bind mounts et ports de développement hérités.
+Le frontend sert Nginx/TLS, tandis que l'API, PostgreSQL, Redis et ClamAV restent privés. Les
+certificats TLS sont provisionnés avant le démarrage. Les secrets ne sont **jamais** dans l'image ;
+`SECRET_KEY`, les identifiants DB/SMS et les domaines viennent de `.env` ou d'un gestionnaire de
+secrets. L'absence de configuration de production requise fait échouer le démarrage (fail-fast).
 
 ## 3. Configuration
 
-`config/settings.py` piloté par variables d'environnement (django-environ) :
-`DJANGO_ENV` (`local`|`test`|`production`) · `DEBUG` · `ALLOWED_HOSTS` (ajout automatique du
-domaine de prévisualisation) · `DATABASE_URL` · `REDIS_URL` · `CELERY_BROKER_URL` ·
-`SECRET_KEY` · `SMS_PROVIDER` (`console` en dev/test, `real` en prod) · `OTP_*` · `CORS_ALLOWED_ORIGINS` ·
-`MEDIA_STORAGE` (`local`|`s3`).
+`config/settings.py` est piloté par variables d'environnement (django-environ) :
+`DJANGO_ENV` (`local`|`test`|`production`) · `DEBUG` · `ALLOWED_HOSTS` · `DATABASE_URL` ·
+`REDIS_URL` · `CELERY_BROKER_URL` · `SECRET_KEY` · `SMS_PROVIDER` (`console` en dev/test,
+`africastalking` en production), `SMS_USERNAME`, `SMS_API_KEY`, `SMS_SENDER_ID` · `OTP_*` ·
+`CORS_ALLOWED_ORIGINS` · `MEDIA_STORAGE` · `MAX_MEDIA_*_QUOTA_MB` · `CLAMAV_*`.
+En production, la clé, le fournisseur SMS HTTPS et ClamAV sont obligatoires.
 
-En test/CI : base SQLite (`USE_SQLITE=1`), cache `LocMem`, `CELERY_TASK_ALWAYS_EAGER`, SMS en
-adaptateur console → les tests tournent sans infrastructure externe.
+En test/CI : base SQLite en mémoire, cache `LocMem`, Celery eager et SMS/email console ; aucune
+infrastructure externe n'est nécessaire. `settings_test.py` force les adaptateurs locaux même si
+un `.env` de développeur est présent.
 
-## 4. Stratégie de stockage des médias
+## 4. Stratégie de stockage et sécurité des médias
 
-- **Upload** : `multipart` direct vers Django (`/api/evidences/`), en-tête `Idempotency-Key`.
-  Pas de presigned URL dans le MVP (simplicité) — évolution documentée en ADR-004.
-- **Validation serveur** : type MIME réel (magic bytes via Pillow), taille max 10 Mo, dimensions
-  max 4000 px ; refus → `415`/`413`. Le nom de fichier client est ignoré, le chemin de
-  stockage est régénéré (`evidences/{project_id}/{yyyy}/{mm}/{uuid}.{ext}`).
-- **Dérivées** : à l'upload, l'originale est conservée et une **miniature** (320 px, WebP q75)
-  + une version « liste » (1080 px) sont générées **en tâche Celery**, jamais dans la requête
-  HTTP. Les listes n'utilisent que les thumbnails.
-- **Accès** : les médias ne sont **pas** servis publiquement. Les fichiers passent toujours par
-  l'API (`/api/evidences/{id}/file/`, `/thumbnail/`) qui vérifie l'appartenance au projet
-  (`404` sinon) et répond en `Cache-Control: private`. Avec `MEDIA_X_ACCEL_REDIRECT=true`, Django
-  renvoie un `X-Accel-Redirect` et c'est Nginx qui sert le fichier — le contrôle d'accès reste
-  dans l'application. Les URLs renvoyées sont **relatives** pour rester valables derrière un proxy.
-  Implémenté et testé en phase 5 (ADR-004 et ADR-006 tranchées).
-- **Nommage/version** : `Evidence.hash_sha256` permet la déduplication ; aucun fichier orphelin
-  (tâche de nettoyage hebdomadaire).
+- **Upload** : `multipart` direct vers Django (`/api/evidences/`) avec `Idempotency-Key` ; le
+  serveur vérifie signature binaire, taille (10 Mo), dimensions et empreinte SHA-256.
+- **Quarantaine** : evidences et justificatifs passent en statut de scan `SCANNING`. ClamAV est
+  obligatoire en production ; seul un média `CLEAN` peut être téléchargé ou dérivé. Les fichiers
+  infectés sont supprimés et leurs quotas/métriques sont libérés. Une tâche périodique reprend les
+  scans `PENDING` ou restés `SCANNING` après la perte d'un worker.
+- **Quotas** : plafonds configurables par utilisateur et projet ; les fichiers supprimés ne sont
+  pas comptabilisés. Les dérivées (miniature WebP 320 px, aperçu JPEG 1080 px) sont générées hors
+  requête HTTP par Celery.
+- **Accès** : aucune URL publique permanente. L'API JWT vérifie l'accès au projet ; les images
+  utilisées par `<img>` portent un jeton signé lié à l'utilisateur et à la preuve, expirant après
+  `SIGNED_MEDIA_TOKEN_TTL_SECONDS` (300 s par défaut). Toutes les réponses sont `private, no-store`
+  et `no-referrer`. Avec `MEDIA_X_ACCEL_REDIRECT=true`, Nginx ne sert que le chemin privé transmis
+  par Django après le contrôle d'autorisation.
+- **Déduplication/nettoyage** : `Evidence.hash_sha256` empêche les dépôts identiques par projet ;
+  une tâche hebdomadaire nettoie les fichiers orphelins.
 
 ## 5. Observabilité
 
@@ -95,10 +97,14 @@ adaptateur console → les tests tournent sans infrastructure externe.
 - **Healthcheck** : `GET /api/health/` vérifie app + base (`SELECT 1`) + Redis (`PING`), avec
   `checks_ms` ; `503` si une dépendance critique échoue. Utilisé par Docker `healthcheck` et
   par le supervisseur de production.
-- **Métriques** (compteurs, exposés via `/api/metrics/` protégé ou export Prometheus ultérieur) :
-  requêtes par endpoint/latence/statut · `otp_sent_total`, `otp_failed_total` ·
-  `password_reset_total{success,failed}` · `upload_total`, `upload_bytes` ·
-  `sync_failed_total` · `celery_task_total{state}`.
+- **Métriques** : `GET /api/metrics/` est réservé à l'administrateur plateforme. Il expose le
+  volume/erreurs/latence p95 par route Django (templates de routes, sans query strings), compteurs
+  de synchronisation, octets et état de scan des médias, dépendances DB/Redis et états Celery.
+  Redis conserve les compteurs avec cardinalité bornée ; en cas d'indisponibilité l'observabilité
+  retombe en mémoire et ne bloque pas les requêtes métier.
+- **Exploitation** : `/api/operations/` et `/api/operations/tasks/` exposent les événements métier
+  en attente et l'historique filtrable Celery aux administrateurs plateforme seulement. Les
+  arguments des tâches ne sont pas enregistrés ; les erreurs sont filtrées avant persistance.
 - **Erreurs** : handler DRF unique → enveloppe d'erreur + `request_id` ; exception non gérée →
   `500` générique + log `ERROR` avec `request_id` (aucune donnée sensible dans la réponse).
 
@@ -109,9 +115,9 @@ adaptateur console → les tests tournent sans infrastructure externe.
   explicitement au lieu de laisser croire à une sauvegarde.
 - Le binaire des photos est stocké en `ArrayBuffer` (et non en `Blob`) : c'est la forme la plus
   universellement clonable par IndexedDB ; il est reconstruit en `Blob` à l'envoi.
-- Aucune donnée du serveur n'est mise en cache pour l'instant : le cache de lecture (SWR) arrive
-  avec le dashboard agrégé (phase 8). Ce qui est stocké localement est **exactement** ce qui doit
-  être rejoué.
+- Les données métier du serveur ne sont pas mises en cache durablement dans le navigateur. Le
+  dashboard utilise un cache serveur court (30 s par défaut) ; les mutations et preuves hors ligne
+  conservent uniquement ce qui doit être rejoué.
 - Toute écriture rejouable porte une clé d'idempotence ; le serveur tient le registre
   (`SyncOperation`) et rejoue la réponse d'origine plutôt que de réappliquer l'opération.
 
@@ -129,24 +135,30 @@ adaptateur console → les tests tournent sans infrastructure externe.
 
 ## 8. Décisions d'architecture (ADR)
 
-| # | Décision | Statut | Responsable | Échéance |
-|---|---|---|---|---|
-| ADR-001 | Téléphone = identifiant unique, email facultatif | Acceptée | Produit | — |
-| ADR-002 | Réinitialisation du mot de passe par OTP SMS (P0) | Acceptée | Produit/Tech | — |
-| ADR-003 | Montants en entiers FCFA, pas de centimes | Acceptée | Finance/Tech | — |
-| ADR-004 | Upload direct Django vs presigned URL S3 | Acceptée (upload direct) | Tech | ✅ Phase 5 |
-| ADR-005 | Fournisseur SMS (local vs international) + coût/OTP | **Ouverte** | Produit | avant Phase 2 |
-| ADR-006 | Stockage média : volume chiffré vs S3-compatible | Acceptée (volume privé + `X-Accel-Redirect`) | Tech | ✅ Phase 5 |
-| ADR-007 | Procédure « numéro perdu / changement de SIM » | **Ouverte** | Produit | avant Phase 2 |
-| ADR-008 | SSE/WebSocket pour le temps réel (post-MVP) | Reportée | Tech | post-MVP |
+| # | Décision | Statut |
+|---|---|---|
+| ADR-001 | Téléphone = identifiant unique ; email facultatif | ✅ Acceptée |
+| ADR-002 | Réinitialisation du mot de passe par OTP SMS (MVP-017) | ✅ Acceptée |
+| ADR-003 | Montants en entiers FCFA, jamais de centimes | ✅ Acceptée |
+| ADR-004 | Upload direct Django avec idempotence ; presigned URL S3 si l'échelle l'exige | ✅ Acceptée |
+| ADR-005 | Africa's Talking pour SMS, via API HTTPS ; secrets et sender ID par environnement | ✅ Intégrée ; compte, KYC, sender ID et coûts à configurer |
+| ADR-006 | Volume média privé en local/prod, accès autorisé par Django puis `X-Accel-Redirect` ; S3 ultérieur | ✅ Acceptée |
+| ADR-007 | Procédure « numéro perdu / changement de SIM » | 🟡 À décider avant déploiement public |
+| ADR-008 | Invitations par SMS (`ProjectInvitation`) | ⏭️ Hors MVP |
+| ADR-009 | Gantt graphique vs planning listé | 🟡 Retour produit souhaité |
+| ADR-010 | Calendrier ouvré / jours fériés camerounais pour les retards | 🟡 À décider avant exploitation métier |
+| ADR-011 | Dépassement budgétaire motivé, refusé sans motif | ✅ Acceptée |
+| ADR-012 | `can_manage_finance` ne donne pas le droit d'approuver/payer | ✅ Acceptée |
 
-## 9. Arborescence cible
+## 9. Arborescence du dépôt
 
 ```
-backend/     config/ (settings, urls, celery, asgi/wsgi) · apps/ (users, projects, evidence,
-             finance, core) · requirements*.txt · manage.py · pytest.ini
-frontend/    src/ (api, auth, components, pages, lib (file hors ligne `db.ts`/`outbox.ts`), sync/) · vite.config.ts
-infra/       docker-compose*.yml · nginx/ · Dockerfile.*
+backend/     config/ · apps/core, users, organizations, projects, evidences, sync, finance,
+             notifications · migrations · tests · requirements*.txt · manage.py
+frontend/    src/api, auth, components, pages, lib, sync · e2e/ · Vitest · Playwright
+             Dockerfile · nginx.conf · vite.config.ts
+Docker       docker-compose.yml · docker-compose.prod.yml · dev.sh
+
 docs/        BACKLOG_MVP.md · architecture.md · data-model.md · rbac-matrix.md ·
-             api-contract.md · offline-sync.md · test-plan.md · flows/authentication.md
+             api-contract.md · offline-sync.md · test-plan.md · STATUS.md · flows/
 ```

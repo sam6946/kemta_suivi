@@ -1,6 +1,6 @@
-# Surcharge de production : `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
-# Différences clés : pas de montage de code, frontend statique servi par Nginx avec TLS,
-# secrets fournis par l'environnement (jamais dans l'image), DEBUG=false obligatoire.
+# Production: HTTPS Nginx, app behind a private network and ClamAV mandatory.
+# Requires Docker Compose v2.24+ (`!reset` removes inherited development mounts/ports).
+# Provision ./certs/fullchain.pem and ./certs/privkey.pem before starting.
 name: kemta-suivi-prod
 
 services:
@@ -14,9 +14,18 @@ services:
       DJANGO_ENV: production
       DEBUG: "false"
       INSTALL_DEV: "false"
-    volumes:
+      ANTIVIRUS_REQUIRED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      MEDIA_X_ACCEL_REDIRECT: "true"
+      SECURE_SSL_REDIRECT: "true"
+    # Supprime le bind mount de code et le port de développement hérités du compose de base.
+    volumes: !reset
       - media:/app/var/media
-    ports: []
+    ports: !reset []
+    depends_on:
+      clamav:
+        condition: service_started
 
   worker:
     build:
@@ -27,8 +36,15 @@ services:
     environment:
       DJANGO_ENV: production
       DEBUG: "false"
-    volumes:
+      ANTIVIRUS_REQUIRED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      MEDIA_X_ACCEL_REDIRECT: "true"
+    volumes: !reset
       - media:/app/var/media
+    depends_on:
+      clamav:
+        condition: service_started
 
   beat:
     build:
@@ -39,21 +55,40 @@ services:
     environment:
       DJANGO_ENV: production
       DEBUG: "false"
+      ANTIVIRUS_REQUIRED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      MEDIA_X_ACCEL_REDIRECT: "true"
+    volumes: !reset []
 
   frontend:
     build:
       context: ./frontend
       target: prod
     restart: unless-stopped
-    volumes: []
-    ports:
+    volumes: !reset
+      - media:/app/var/media:ro
+      - ${TLS_CERTS_DIR:-./certs}:/etc/nginx/certs:ro
+      - ${ACME_WEBROOT_DIR:-./certbot/www}:/var/www/certbot:ro
+    ports: !reset
       - "${HTTP_PORT:-80}:80"
-    environment:
-      DJANGO_ENV: production
+      - "${HTTPS_PORT:-443}:443"
+
+  clamav:
+    image: ${CLAMAV_IMAGE:-clamav/clamav:1.4}
+    restart: unless-stopped
+    volumes:
+      - clamavdata:/var/lib/clamav
+    expose:
+      - "3310"
 
   db:
     restart: unless-stopped
-    ports: []
+    ports: !reset []
 
   redis:
     restart: unless-stopped
+    ports: !reset []
+
+volumes:
+  clamavdata:

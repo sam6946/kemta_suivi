@@ -8,10 +8,12 @@ from .views import (
     EvidencePendingCountView,
     EvidenceTransitionView,
     ProjectEvidenceListView,
+    SignedEvidenceMediaView,
 )
 
 urlpatterns = [
     path("evidences/", EvidenceCreateView.as_view(), name="evidence-create"),
+    path("media/<str:token>/", SignedEvidenceMediaView.as_view(), name="signed-evidence-media"),
     path("evidences/pending/", EvidencePendingCountView.as_view(), name="evidence-pending"),
     path("evidences/<int:pk>/", EvidenceDetailView.as_view(), name="evidence-detail"),
     path(

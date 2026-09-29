@@ -1,14 +1,15 @@
-# Modèle de données — KEMTA SUIVI (Phase 0)
+# Modèle de données — KEMTA SUIVI (MVP implémenté)
 
-Statut : proposition à valider. Devise par défaut : **XAF (FCFA)**. Fuseau : `Africa/Douala`.
-Toutes les dates sont en `UTC` en base, affichées en heure locale.
+Référence logique des modèles Django actuels (ce n'est pas un DDL généré). Devise par défaut :
+**XAF (FCFA)**. Fuseau : `Africa/Douala`. Les dates/heures sont stockées en UTC et affichées en
+heure locale ; les jours métier de retard utilisent le fuseau configuré.
 
 ## Conventions transverses
 
 | Sujet | Décision |
 |---|---|
-| Clé primaire | `UUID` (`uuid4`) exposé publiquement ; pas d'ID séquentiel dans les URLs |
-| Suppression | **suppression logique** : champ `deleted_at` + manager `objects = SoftDeleteManager()` ; les journaux (`ActivityLog`) ne sont jamais supprimés |
+| Clé primaire | Django `BigAutoField` ; les API appliquent le contrôle de périmètre (un ID ne vaut pas autorisation) |
+| Suppression | Les entités métier concernées utilisent `deleted_at` + manager de suppression logique ; `ActivityLog`, `EvidenceValidation` et `FinancialTransaction` ne sont jamais supprimés |
 | Horodatage | `created_at`, `updated_at` automatiques |
 | Traçabilité | `created_by` / `updated_by` (FK `User`, `on_delete=PROTECT`) sur les entités métier |
 | Argent | `DecimalField(max_digits=15, decimal_places=0)` — **montants entiers en FCFA** ; tout montant avec centimes est **refusé** (`400 amount_invalid`), pas arrondi silencieusement. Le jour où des centimes sont nécessaires, migration explicite + ADR. |
@@ -25,7 +26,7 @@ Toutes les dates sont en `UTC` en base, affichées en heure locale.
 
 | Champ | Type | Contraintes |
 |---|---|---|
-| `id` | UUID PK | |
+| `id` | `BigAutoField` PK | |
 | `phone` | `CharField(20)` | **unique** (si non supprimé), format E.164 (`+2376XXXXXXXX`) |
 | `email` | `EmailField` | **nullable**, unique si renseigné, non requis à l'inscription |
 | `email_verified_at` | `DateTime` | nullable |
@@ -44,7 +45,7 @@ Toutes les dates sont en `UTC` en base, affichées en heure locale.
 
 | Champ | Type | Notes |
 |---|---|---|
-| `id` | UUID PK | |
+| `id` | `BigAutoField` PK | |
 | `phone` | `CharField(20)` | indexé |
 | `code_hash` | `CharField(128)` | `sha256(sel + code)` — le code en clair n'est jamais persisté |
 | `salt` | `CharField(64)` | |
@@ -56,7 +57,7 @@ Toutes les dates sont en `UTC` en base, affichées en heure locale.
 | `created_at` | | |
 | `user` | FK nullable | renseigné si le compte existe |
 
-Index : `(phone, purpose, consumed_at, expires_at)`. Purge par tâche Celery quotidienne.
+Index : `(phone, purpose, consumed_at)`. Les OTP expirés/consommés sont purgés par Celery toutes les 6 heures.
 
 ### `ActivityLog` — **immuable**
 
@@ -68,12 +69,11 @@ Règles : **aucune suppression ni modification** au niveau application (`Activit
 désactivé, queryset de lecture seule) ; lecture réservée aux rôles autorisés ; pagination
 obligatoire.
 
-### `IdempotencyKey`
+### `SyncOperation` (MVP-009)
 
-`key` (UUID client) · `user` · `endpoint` · `request_hash` · `response_status` ·
-`response_body` · `state` (`IN_PROGRESS` / `DONE`) · `created_at` (TTL 24 h).
-Contrainte : `unique(user, endpoint, key)` → garantit « une même opération répétée ne crée pas de
-doublon » (MVP-009).
+`user` · `idempotency_key` · `operation_type` · `status` (`IN_PROGRESS` / `DONE`) · `http_status` ·
+`entity_type` · `entity_id` · `response_body` · timestamps. Contrainte unique `(user, idempotency_key)` ;
+détails du rejeu et des conflits en §4.
 
 ---
 
@@ -94,7 +94,7 @@ Contrainte : `unique(organization, user)`.
 `geofence_radius_m` (détection « preuve hors périmètre ») · `currency` (`XAF`) ·
 `budget_total` · `status` (`DRAFT` / `ACTIVE` / `ON_HOLD` / `COMPLETED` / `ARCHIVED`) ·
 `progress` (calculé serveur, mis en cache) · `planned_start_date` · `planned_end_date` ·
-`actual_start_date` · `actual_end_date` · `cover` · `created_by` · `deleted_at`.
+`actual_start_date` · `actual_end_date` · `created_by` · `created_at` / `updated_at` · `deleted_at`.
 
 ### `ProjectMember`
 `project` · `user` · `role` (rôle *par projet*) · `can_validate_evidence` ·
@@ -139,8 +139,10 @@ qualité 75) · `list_version` (JPEG 1080 px pour les listes) · `hash_sha256` (
 `captured_at` (horodatage appareil) · `received_at` (serveur, `auto_now_add`) · `latitude` ·
 `longitude` · `gps_accuracy` · `gps_status` (`AVAILABLE` / `UNAVAILABLE` / `DENIED`) ·
 `device_model` · `device_platform` · `app_version` · `description` · `size_bytes` ·
-`content_type` · `sync_status` (`PENDING` / `UPLOADING` / `SYNCED` / `FAILED` / `CONFLICT`) ·
-`status` (`PENDING` / `VALIDATED` / `REJECTED` / `FLAGGED`) · `idempotency_key` · `deleted_at`.
+`content_type` · `scan_status` (`PENDING` / `SCANNING` / `CLEAN` / `INFECTED` / `ERROR`) ·
+`scan_result` · `scanned_at` · `sync_status` (`PENDING` / `UPLOADING` / `SYNCED` / `FAILED` /
+`CONFLICT`) · `status` (`PENDING` / `VALIDATED` / `REJECTED` / `FLAGGED`) · `idempotency_key` ·
+`deleted_at`.
 
 Contraintes :
 - `UniqueConstraint(project, hash_sha256)` **partielle** (hors preuves supprimées) → dédoublonnage
@@ -207,7 +209,8 @@ révision). Un poste portant des dépenses ne peut pas être supprimé.
 `project` · `budget_line` (nullable, **même projet**) · `title` · `description` · `amount`
 (entier > 0) · `currency` · `incurred_on` · `invoice_number` (**unique par projet si renseigné**) ·
 `invoice_date` (≤ `incurred_on`) · `status` (`DRAFT` / `SUBMITTED` / `APPROVED` / `REJECTED` /
-`PAID` / `CANCELLED`) · `receipt` + `receipt_hash` (SHA-256 du contenu réel) · `created_by` ·
+`PAID` / `CANCELLED`) · `receipt` + `receipt_hash` (SHA-256 du contenu réel) · `receipt_size_bytes` · `receipt_content_type` ·
+`receipt_scan_status` / `receipt_scan_result` / `receipt_scanned_at` · `created_by` ·
 `approved_by` / `approved_at` · `cancelled_at` · `deleted_at`.
 
 `is_editable` = `DRAFT` | `SUBMITTED` | `REJECTED` : après approbation, la dépense est figée
@@ -245,9 +248,10 @@ supprimée ; une erreur se corrige par une **contre-écriture**.
 
 ## 6. Notifications et exploitation (Phase 10/11)
 
-`Notification` : `user` · `type` (`MILESTONE_VALIDATED` / `EXPENSE_SUBMITTED` /
-`EVIDENCE_REJECTED` / `BUDGET_THRESHOLD_REACHED` / `PROJECT_DELAYED`) · `title` · `body` ·
-`payload` (JSON) · `group_key` (regroupement) · `count` · `is_read` · `created_at`.
+`Notification` : `recipient` · `event_type` (`MILESTONE_VALIDATED` / `EXPENSE_SUBMITTED` /
+`EVIDENCE_REJECTED` / `BUDGET_THRESHOLD_REACHED` / `PROJECT_DELAYED`) · `project` · `title` · `body` ·
+`payload` (JSON) · `group_key` · `count` · `last_seen_at` · `read_at` · timestamps. `is_read` est une
+propriété calculée (`read_at != null`), pas un champ stocké.
 
 `CeleryTaskLog` (suivi) : `task_id` · `name` · `state` · `retries` · `error` · `created_at` ·
 `updated_at`.
@@ -255,18 +259,18 @@ supprimée ; une erreur se corrige par une **contre-écriture**.
 ## 7. Événements journalisés (`ActivityLog.action`)
 
 `USER_REGISTERED` · `OTP_SENT` · `OTP_VERIFIED` · `OTP_FAILED` · `OTP_RESEND` · `LOGIN_SUCCESS` ·
-`LOGIN_FAILED` · `LOGOUT` · `TOKEN_REFRESHED` · `TOKEN_REFRESH_REJECTED` ·
+`LOGIN_FAILED` · `ACCOUNT_LOCKED` · `LOGOUT` · `TOKEN_REFRESHED` · `TOKEN_REFRESH_REJECTED` ·
 `PASSWORD_RESET_REQUESTED` · `PASSWORD_RESET_FAILED` · `PASSWORD_RESET_CONFIRMED` ·
 `PASSWORD_RESET_DENIED` · `PASSWORD_CHANGED` · `EMAIL_ADDED` · `EMAIL_VERIFIED` ·
 `ORG_CREATED` · `ORG_UPDATED` · `PROJECT_CREATED` · `PROJECT_UPDATED` · `PROJECT_ARCHIVED` ·
 `MEMBER_ADDED` · `MEMBER_ROLE_CHANGED` · `MEMBER_REMOVED` · `MILESTONE_CREATED` ·
-`MILESTONE_UPDATED` · `MILESTONE_CLOSED` · `TASK_CREATED` · `TASK_UPDATED` · `TASK_CLOSED` ·
-`EVIDENCE_CAPTURED` · `EVIDENCE_VALIDATED` · `EVIDENCE_REJECTED` · `EVIDENCE_FLAGGED` ·
-`EVIDENCE_REOPENED` ·
-`BUDGET_LINE_CREATED` · `BUDGET_LINE_UPDATED` · `BUDGET_LINE_DELETED` · `EXPENSE_CREATED` ·
-`EXPENSE_UPDATED` · `EXPENSE_SUBMITTED` · `EXPENSE_APPROVED` · `EXPENSE_REJECTED` ·
-`EXPENSE_CANCELLED` · `EXPENSE_RECEIPT_ATTACHED` · `PAYMENT_RECORDED` · `PAYMENT_CANCELLED` ·
-`ADJUSTMENT_RECORDED` · `BUDGET_THRESHOLD_REACHED` · `BUDGET_EXCEEDED` · `EXPORT_GENERATED`.
+`MILESTONE_UPDATED` · `MILESTONE_DELETED` · `TASK_CREATED` · `TASK_UPDATED` ·
+`TASK_STATUS_CHANGED` · `TASK_DELETED` · `EVIDENCE_CAPTURED` · `EVIDENCE_VALIDATED` ·
+`EVIDENCE_REJECTED` · `EVIDENCE_FLAGGED` · `EVIDENCE_REOPENED` · `BUDGET_LINE_CREATED` ·
+`BUDGET_LINE_UPDATED` · `BUDGET_LINE_DELETED` · `EXPENSE_CREATED` · `EXPENSE_UPDATED` ·
+`EXPENSE_SUBMITTED` · `EXPENSE_APPROVED` · `EXPENSE_REJECTED` · `EXPENSE_CANCELLED` ·
+`EXPENSE_RECEIPT_ATTACHED` · `PAYMENT_RECORDED` · `PAYMENT_CANCELLED` · `ADJUSTMENT_RECORDED` ·
+`BUDGET_THRESHOLD_REACHED` · `BUDGET_EXCEEDED`.
 
 ## 8. Diagramme relationnel (texte)
 
@@ -279,5 +283,7 @@ Organization ──< OrganizationMember >── User
               ├──< FinancialTransaction
               └──< Evidence ──< EvidenceValidation
 User ──< OTPCode        User ──< ActivityLog (actor)      Project ──< ActivityLog
-User ──< IdempotencyKey User ──< Notification
+User ──< SyncOperation
+BusinessEvent ──< Notification >── User
+CeleryTaskLog (journal global des tâches)
 ```
