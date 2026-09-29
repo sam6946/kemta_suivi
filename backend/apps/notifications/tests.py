@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 import pytest
+from django.db import connection
 from django.utils import timezone
 
 from apps.notifications.models import (
@@ -40,6 +41,23 @@ def test_business_event_dispatch_creates_private_notifications(project, project_
     assert not Notification.objects.filter(recipient=stranger).exists()
     assert BusinessEvent.objects.get(pk=event.pk).dispatched_at is not None
     assert dispatch_event(event.pk) == 0
+
+
+@pytest.mark.django_db
+def test_dispatch_locks_outbox_row_without_locking_nullable_project_join():
+    """La FK project nullable doit rester compatible avec le verrou PostgreSQL de l'outbox."""
+    if not connection.features.has_select_for_update_of:
+        pytest.skip("Ce moteur ne prend pas en charge SELECT FOR UPDATE OF (PostgreSQL).")
+
+    event = BusinessEvent.objects.create(
+        event_type=BusinessEventType.PROJECT_DELAYED,
+        project=None,
+        payload={},
+    )
+
+    assert dispatch_event(event.pk) == 0
+    event.refresh_from_db()
+    assert event.dispatched_at is not None
 
 
 @pytest.mark.django_db

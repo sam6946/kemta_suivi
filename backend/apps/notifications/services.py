@@ -197,7 +197,12 @@ def _notification_text(event: BusinessEvent) -> tuple[str, str]:
 @transaction.atomic
 def dispatch_event(event_id: int) -> int:
     """Matérialise une notification par destinataire, au plus une fois par événement."""
-    event = BusinessEvent.objects.select_for_update().select_related("project").get(pk=event_id)
+    # `project` est nullable : ne verrouille que la ligne outbox, pas le côté du LEFT JOIN.
+    event = (
+        BusinessEvent.objects.select_for_update(of=("self",))
+        .select_related("project")
+        .get(pk=event_id)
+    )
     if event.dispatched_at:
         return 0
 

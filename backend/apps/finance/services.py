@@ -57,8 +57,9 @@ def locked_project(project_id: int) -> Project:
 
 
 def locked_expense(expense_id: int, project: Project) -> Expense:
+    # `budget_line` est nullable : on verrouille la dépense, pas le côté NULL du LEFT JOIN.
     return (
-        Expense.objects.select_for_update()
+        Expense.objects.select_for_update(of=("self",))
         .select_related("budget_line")
         .get(pk=expense_id, project=project)
     )

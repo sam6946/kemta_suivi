@@ -8,7 +8,7 @@ compte fournisseur, d'un navigateur ou d'une infrastructure de production sont d
 
 | Vérification | Résultat |
 |---|---|
-| Backend — `cd backend && ./.venv/bin/pytest` | **504 réussis, 2 ignorés** ; les deux tests ignorés nécessitent PostgreSQL (concurrence) |
+| Backend — `cd backend && ./.venv/bin/pytest` | **504 réussis, 4 ignorés** ; les tests ignorés portent sur les verrous/concurrences PostgreSQL et sont incompatibles avec SQLite |
 | Backend — `ruff check .` + `ruff format --check .` | ✅ propres |
 | Django — `manage.py check` | ✅ aucun problème |
 | Migrations — `makemigrations --check --dry-run` | ✅ aucune migration manquante |
