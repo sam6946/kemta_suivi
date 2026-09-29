@@ -43,8 +43,10 @@
 ## 2. Docker Compose
 
 Développement : `db` (PostgreSQL 16), `redis` (Redis 7), `web` (Django), `worker`, `beat` et
-`frontend` (Vite/HMR). La commande `./dev.sh` choisit Docker si le daemon est disponible, sinon
-elle démarre le backend SQLite et Vite localement. La seed `seed_dev` n'est destinée qu'au local.
+`frontend` (Vite/HMR). PostgreSQL reste privé sur le réseau Compose (`db:5432`) et n'occupe pas
+le port 5432 de l'hôte ; un shell SQL est accessible via `docker compose exec db psql -U kemta -d kemta`.
+La commande `./dev.sh` choisit Docker si le daemon est disponible, sinon elle démarre le backend
+SQLite et Vite localement. La seed `seed_dev` n'est destinée qu'au local.
 
 Production : superposer `docker-compose.prod.yml` à la base avec
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Docker Compose

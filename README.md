@@ -27,6 +27,10 @@ initialiser depuis `.env.example`.
 - Santé : <http://localhost:8000/api/health/>
 - Admin : <http://localhost:8000/admin/>
 
+Avec Docker Compose, PostgreSQL reste privé sur le réseau interne (`db:5432`) : le port hôte 5432
+n'est pas publié, ce qui évite les collisions avec un PostgreSQL déjà installé. Pour ouvrir une
+console SQL : `docker compose exec db psql -U kemta -d kemta`.
+
 Comptes de démonstration — **développement uniquement** :
 
 | Rôle | Téléphone | Mot de passe |
